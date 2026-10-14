@@ -1,0 +1,106 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { createConfigStore, validateAccount, dataDir } from '../src/config.js';
+
+const account = (id = 'test-account') => ({
+  id, email: 'person@example.pl', displayName: 'Test Person',
+  imap: { host: 'serwer123456.home.pl', port: 993 },
+  smtp: { host: 'serwer123456.home.pl', port: 465 }, folders: { sent: 'Wysłane' },
+});
+
+async function fixture(t, customKeyring) {
+  const directory = await mkdtemp(join(tmpdir(), 'homepl-config-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const secrets = new Map();
+  const keyring = customKeyring || {
+    async getPassword(id) { return secrets.get(id) ?? null; },
+    async setPassword(id, password) { secrets.set(id, password); },
+    async deletePassword(id) { return secrets.delete(id); },
+  };
+  return { directory, secrets, store: createConfigStore({ directory, keyring }) };
+}
+
+test('data directory uses the native per-user location and supports an explicit override', () => {
+  const previous = process.env.HOME_MAIL_DATA_DIR;
+  try {
+    delete process.env.HOME_MAIL_DATA_DIR;
+    const expected = process.platform === 'win32'
+      ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'homepl-email-mcp')
+      : join(homedir(), '.local', 'share', 'homepl-email-mcp');
+    assert.equal(dataDir(), resolve(expected));
+    process.env.HOME_MAIL_DATA_DIR = join(tmpdir(), 'explicit-homepl-test-directory');
+    assert.equal(dataDir(), resolve(process.env.HOME_MAIL_DATA_DIR));
+  } finally {
+    if (previous === undefined) delete process.env.HOME_MAIL_DATA_DIR;
+    else process.env.HOME_MAIL_DATA_DIR = previous;
+  }
+});
+
+test('account metadata persists without secret material; password stays in injected OS-keyring adapter', async t => {
+  const { directory, secrets, store } = await fixture(t);
+  const saved = await store.saveAccount({ ...account(), password: 'injected-secret', auth: { pass: 'another-secret' } }, 'actual-password');
+  assert.deepEqual(saved, account());
+  assert.equal(secrets.get('test-account'), 'actual-password');
+  assert.equal(await store.getPassword('test-account'), 'actual-password');
+  assert.deepEqual(await store.getAccount('test-account'), account());
+  const raw = await readFile(join(directory, 'accounts.json'), 'utf8');
+  assert.doesNotMatch(raw, /actual-password|injected-secret|another-secret|password|auth/);
+  assert.deepEqual(await readdir(directory), ['accounts.json']);
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(directory)).mode & 0o777, 0o700);
+    assert.equal((await stat(join(directory, 'accounts.json'))).mode & 0o777, 0o600);
+  }
+  await store.removeAccount('test-account');
+  assert.equal(secrets.has('test-account'), false);
+  assert.deepEqual(await store.listAccounts(), []);
+  await assert.rejects(store.getPassword('test-account'), /not found/);
+});
+
+test('concurrent saves preserve both accounts and replacement rotates only one credential', async t => {
+  const { store } = await fixture(t);
+  await Promise.all([store.saveAccount(account('a'), 'password-a'), store.saveAccount(account('b'), 'password-b')]);
+  assert.deepEqual((await store.listAccounts()).map(a => a.id).sort(), ['a', 'b']);
+  await store.saveAccount({ ...account('a'), displayName: 'Updated' }, 'rotated-a');
+  assert.equal(await store.getPassword('a'), 'rotated-a');
+  assert.equal(await store.getPassword('b'), 'password-b');
+  assert.equal((await store.listAccounts()).length, 2);
+});
+
+test('locked credential store fails closed with no disk password fallback or leaked native error', async t => {
+  const { store, directory } = await fixture(t, {
+    async getPassword() { throw new Error('native private-password AUTH transcript'); },
+  });
+  await assert.rejects(store.saveAccount(account(), 'private-password'), error => {
+    assert.match(error.message, /credential store/);
+    assert.doesNotMatch(error.message, /private-password|transcript/);
+    return true;
+  });
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('invalid ports, credential-bearing URLs, path IDs and control characters are rejected before saving', async t => {
+  const { store, secrets } = await fixture(t);
+  for (const input of [
+    { ...account(), id: '../escape' },
+    { ...account(), email: 'person@example.pl\r\nBcc: victim@example.pl' },
+    { ...account(), imap: { host: 'serwer123456.home.pl', port: 143 } },
+    { ...account(), smtp: { host: 'smtp://user:secret@example.pl', port: 465 } },
+    { ...account(), imap: { host: '127.0.0.1', port: 993 } },
+    { ...account(), folders: { trash: 'Trash\0Injected' } },
+  ]) await assert.rejects(store.saveAccount(input, 'secret'));
+  assert.equal(secrets.size, 0);
+  assert.equal(validateAccount({ ...account(), imap: { host: 'MAIL.EXAMPLE.PL', port: 993 } }).imap.host, 'mail.example.pl');
+});
+
+test('config refuses symlink files instead of reading unrelated files', async t => {
+  // Creating symlinks on Windows can require a policy this test environment does not have.
+  if (process.platform === 'win32') { t.skip('Symlink creation requires OS developer-mode permission.'); return; }
+  const { directory, store } = await fixture(t);
+  const target = join(directory, 'outside.json');
+  await writeFile(target, JSON.stringify({ version: 1, accounts: [account()] }));
+  await symlink(target, join(directory, 'accounts.json'));
+  await assert.rejects(store.listAccounts(), /could not be read/);
+});

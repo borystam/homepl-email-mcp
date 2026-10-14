@@ -1,0 +1,36 @@
+{
+  "name": "homepl-email-mcp",
+  "version": "0.1.0",
+  "description": "Local email access for AI assistants via IMAP and SMTP, with guided setup for home.pl",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "homepl-email-mcp": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js serve",
+    "setup": "node src/cli.js setup",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/cli.js && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@napi-rs/keyring": "2.1.1",
+    "imapflow": "2.4.2",
+    "mailparser": "3.9.39",
+    "nodemailer": "10.1.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "hoodiecrow-imap": "3.3.1",
+    "smtp-server": "3.19.22"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/borystam/homepl-email-mcp.git"
+  }
+}
