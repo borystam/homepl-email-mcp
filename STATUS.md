@@ -9,18 +9,26 @@ UID pagination and search; ordered repeated headers; MIME metadata and body file
 raw .eml and attachment download; prepare/send/reply/reply-all/forward; server
 drafts and updates; flags; move/copy/trash; exact permanent deletion; folder management.
 
-Validation: 43 automated tests pass on the development macOS host, including
-actual loopback IMAP/SMTP and MCP protocol/stdio checks. Native macOS Keychain
-smoke test passed. Independent review found and prompted a fix for retaining
-Bcc metadata in Sent copies. Windows/Linux CI and clean installation are next.
+Validation: all 43 automated tests passed in [CI run 38644428031](https://github.com/borystam/homepl-email-mcp/actions/runs/38644428031)
+on Windows with Node.js 22 and 24, and macOS and Ubuntu with Node.js 24. Tests
+include actual loopback IMAP/SMTP and MCP protocol/stdio checks. Native credential
+store round trips passed on Windows and macOS; Linux Secret Service persistence
+was not exercised in CI. Independent review prompted a fix retaining Bcc metadata
+in Sent copies. A clean public clone on macOS passed a production-only dependency
+installation (`npm ci --omit=dev --ignore-scripts`), native-binding diagnostics,
+and the real stdio MCP launch test. Dependency audit reported zero vulnerabilities.
+The empty local setup form was visually checked; no credentials were entered.
+The repository is public, with release distribution limited to tracked source files.
 
 Not yet verified: a real home.pl mailbox. No live customer email was read or sent.
 Provider-specific folder names and external-client access must be checked during
 the first employee's guided setup. Setup tests IMAP and SMTP authentication without
 sending a message.
 
-Next observable outcome: a clean Windows installation can save a synthetic password
-in Credential Manager and complete the full local IMAP/SMTP/MCP test suite.
+Next observable outcome: the first employee completes local setup on Windows,
+saves their mailbox credential through the private form, and successfully calls
+MCP tools to list folders and read sample message metadata without sending or
+changing mail.
 
 Long-running review cadence: implementation began 2026-10-14 at approximately
 21:46 UTC. Convene the three-person independent council if active work reaches

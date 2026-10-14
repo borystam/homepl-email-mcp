@@ -98,7 +98,7 @@ Removal deletes the saved mailbox credential and account entry. Existing downloa
 | --- | --- |
 | Setup cannot verify login | Full mailbox address, mailbox password, exact IMAP/SMTP hostnames, external-client access, and outbound ports 993/465. Keep TLS verification enabled. |
 | Credential store unavailable | Run as the same logged-in desktop user. Unlock their credential store. On Linux, check Secret Service. Do not substitute plaintext password storage. |
-| `node`/`npm` not found | Install Node.js 22+ through the organization's normal software channel, then restart the terminal/client so its PATH updates. On PowerShell, `npm.cmd` avoids script execution-policy issues. |
+| `node`/`npm` not found | Install Node.js 22+ through the organization's normal software channel, then restart the terminal/client so its PATH updates. On PowerShell, use `npm.cmd`; use `codex.cmd` if an npm-installed `codex.ps1` is blocked. |
 | Server configured but tools absent | Check absolute Node/CLI paths, run `node src/cli.js doctor`, then reload the MCP client. Check workspace restrictions and whether this chat actually runs with local MCP access. |
 | Tools exist but account is missing | Run setup as the same OS user and with the same `HOME_MAIL_DATA_DIR` as the MCP process. |
 | A search page is empty but has a cursor | Continue the cursor. Large gaps between UIDs can require another bounded scan. Search every relevant folder before claiming completeness. |
