@@ -35,9 +35,10 @@ history still requires every relevant folder and every cursor.
   leaf/ancestor symlink replacement and prepared-message integrity/retry prevention.
 - Production dependency audit: zero reported vulnerabilities. `git diff --check`
   passes. No new production dependencies were added.
-- CI runs the suite on Windows, macOS and Ubuntu with Node.js 22 and 24; consult
-  the pull request checks for execution results. Windows/macOS also run the
-  synthetic native credential-store round trip. TLS tests explicitly skip when
+- CI runs the suite on Windows, macOS (Apple silicon and Intel) and Ubuntu with
+  Node.js 22 and 24; consult the pull request checks for execution results.
+  Windows/macOS also verify native saved credentials across fresh processes.
+  TLS tests explicitly skip when
   OpenSSL is unavailable, rather than claim TLS validation without running it.
 
 Limits: synthetic servers are not proof of home.pl-specific behavior. Linux Secret
@@ -45,6 +46,27 @@ Service persistence and a real employee's MCP client/login remain unverified.
 Read-response bounds do not cap all provider metadata allocation; very sparse UID
 spaces can require many pages. Local same-user filesystem access is not a separate
 security boundary. Downloaded mail remains private local data, not application-encrypted.
+
+## Mac rollout and saved login — 2026-10-15
+
+Mac onboarding now has explicit, quoted Terminal commands, a persistent install
+directory, native Node/absolute client paths, Keychain permission guidance and a
+real-client restart check. Windows onboarding remains available. CI adds Intel
+Mac runners alongside the existing Apple silicon runners, on Node.js 22 and 24.
+The native keyring dependency ships binaries for both architectures.
+
+The native credential smoke check now saves a synthetic account and password,
+exits, retrieves/rotates it in a fresh Node process, retrieves/removes it in another
+process, then verifies deletion. It uses a unique test-only service/account and
+temporary metadata; random passwords never enter arguments, environment, logs or
+metadata. Cleanup runs even after failure. This passed locally on macOS arm64;
+all 119 existing tests also pass. It does not simulate an OS reboot or a locked
+Keychain, and does not contact home.pl.
+
+The connector uses saved mailbox passwords with no OAuth/refresh-token expiry.
+Documentation distinguishes that from password changes, credential-store access,
+home.pl's external-client block, and the AI client's own login. A real mailbox
+pilot after client restart and normal OS logout/reboot remains outstanding.
 
 ## Peer MCP bug audit — 2026-10-15
 

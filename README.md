@@ -2,6 +2,10 @@
 
 Connect a local AI agent to a home.pl mailbox through encrypted IMAP and SMTP. Each employee installs the connector on their own computer and signs in once through a private local form. No hosted connector or shared password database is required.
 
+Windows and macOS (Apple silicon and Intel) use the same connector and tools.
+See the [Windows installation](#manual-installation-on-windows) or
+[Mac installation](#manual-installation-on-macos).
+
 This is an independent community project, not an official home.pl product. Version **0.1.0** is an initial release. It has local automated tests; a live home.pl mailbox has **not** yet been tested. Pilot it with one employee before repeating the installation for the team.
 
 ## Unreleased hardening changes
@@ -101,7 +105,78 @@ If the Codex CLI is unavailable, run `node src/cli.js config`. It prints a ready
 
 Restart or reload the client as its MCP configuration requires. A configuration entry alone does not prove the connection works: ask the agent to call `mail_accounts`, `mail_folders`, and `mail_list_messages` with `pageSize: 3`. It can inspect headers using `mail_get_message` with `includeBodies: false`. Initial verification should not send, change or delete any mail.
 
-On macOS or Linux, the same Node/npm commands work from a persistent clone directory; use `npm` instead of `npm.cmd`. `node src/cli.js config` supplies the correct absolute launch paths for that machine. Linux requires an unlocked Secret Service in the user's session; a headless shell without one is insufficient.
+## Manual installation on macOS
+
+Use Node.js **22 or newer** for the Mac's native architecture, npm, Git, and a
+local MCP-capable agent. Run as the employee's usual desktop user, without `sudo`.
+In Terminal, choose a persistent directory (keep it after setup):
+
+```sh
+homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
+mkdir -p "$(dirname "$homeplRepo")"
+git clone --branch v0.1.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
+cd "$homeplRepo"
+npm ci --omit=dev --ignore-scripts
+node src/cli.js doctor
+node src/cli.js setup
+```
+
+Inspect an existing directory before reusing it. Setup opens the same private
+local form described above; enter the mailbox password there yourself. The
+password is saved in **macOS Keychain**. If macOS asks to permit this installed
+Node executable to access the connector's Keychain item, verify the request;
+choosing **Always Allow** grants future access to that item. Do not grant access
+to an unexpected executable or disable Keychain protection.
+
+Register with Codex using absolute paths, after checking for an existing entry:
+
+```sh
+homeplNode="$(node -p 'process.execPath')"
+codex mcp add homepl-email -- "$homeplNode" "$homeplRepo/src/cli.js" serve
+codex mcp list
+```
+
+If the CLI is unavailable, or you use a custom data directory, run
+`node src/cli.js config` and merge the appropriate generated configuration as
+described above. Reload the client and verify actual `mail_accounts`,
+`mail_folders` and metadata reads. Then fully quit and reopen the client and
+repeat a read **without running setup again**. This checks the installed client's
+access to saved credentials, not just the terminal's access.
+
+On Linux, use the same npm commands in a persistent per-user clone. Linux needs
+an unlocked Secret Service in the desktop session; a headless shell alone is
+insufficient.
+
+## Will employees need to log in repeatedly?
+
+Normally, enter the mailbox password **once per computer and OS user**. This
+connector uses password authentication for IMAP/SMTP, not OAuth, access tokens,
+refresh tokens or webmail cookies. It has no scheduled credential expiry and
+opens a fresh authenticated connection for each operation. Closing the agent
+does not remove the saved password. The setup page's 15-minute expiry applies
+only to the form, not the saved account.
+
+What can require attention:
+
+- A changed mailbox password or deleted saved credential: run setup again with
+  the same mailbox and server. It updates the existing account's saved password.
+- A locked or inaccessible credential store: sign into the same OS account and
+  unlock/authorize the store. macOS may request access again after software or
+  Keychain changes. [Apple's Keychain access guidance](https://support.apple.com/en-ie/guide/keychain-access/kyca1243/mac)
+  and [updated-app guidance](https://support.apple.com/en-ie/guide/keychain-access/kyca1331/mac).
+- A moved installation or removed Node executable: regenerate the MCP launch
+  configuration. This does not itself require entering the mailbox password again.
+- home.pl blocks external mail clients, changes the server, or the account is
+  disabled: the mailbox administrator must resolve that. home.pl's webmail 2FA
+  settings include a separate option to block other mail clients; this MCP needs
+  that access permitted. [home.pl's 2FA guidance](https://pomoc.home.pl/baza-wiedzy/jak-wlaczyc-uwierzytelnianie-dwuskladnikowe-w-poczcie-home-pl).
+
+For a newly created mailbox, home.pl says to sign into webmail once before
+configuring a mail client. Its documented mail-client login is the full email
+address plus mailbox password. [home.pl's setup instructions](https://pomoc.home.pl/baza-wiedzy/jak-skonfigurowac-program-do-obslugi-poczty-e-mail).
+The AI application's own sign-in and company policies are separate from this
+saved mailbox login. A live home.pl pilot, including client restart and a normal
+Mac logout/reboot check, remains necessary before promising unattended operation.
 
 ## Credentials and local data
 
