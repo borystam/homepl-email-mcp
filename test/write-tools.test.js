@@ -42,6 +42,45 @@ async function fixture(t, overrides = {}) {
 
 const basic = { accountId: 'a', to: ['customer@example.test'], subject: 'Zażółć gęślą jaźń', text: 'Test body' };
 
+test('multiline text and HTML drafts satisfy strict IMAP CRLF requirements', async t => {
+  const appended = [];
+  const f = await fixture(t, { client: { append: async (folder, raw) => {
+    // Cyrus and other strict servers reject APPEND literals with bare LF.
+    assert.doesNotMatch(raw.toString('latin1'), /(?<!\r)\n/, 'APPEND contains a bare LF');
+    appended.push(raw);
+    return { uid: 89, uidValidity: 7n };
+  } } });
+  for (const body of [
+    { text: 'first\nsecond\r\nthird' },
+    { text: undefined, html: '<p>first</p>\n<p>second</p>\r\n<p>third</p>' },
+    { text: 'first\nsecond', html: '<p>first</p>\n<p>second</p>' },
+  ]) {
+    await f.tools.mail_save_draft({ ...basic, ...body });
+    const parsed = await simpleParser(appended.at(-1));
+    if (body.text) assert.equal(parsed.text.trimEnd(), body.text.replace(/\r\n/g, '\n'));
+    if (body.html) assert.equal(parsed.html.trimEnd().replace(/\r\n/g, '\n'), body.html.replace(/\r\n/g, '\n'));
+  }
+  assert.equal(f.sent.length, 0);
+});
+
+test('prepared and Sent MIME use CRLF while preserving binary attachment bytes', async t => {
+  const f = await fixture(t);
+  const bytes = Buffer.from([0, 10, 13, 10, 13, 255, 128]);
+  await fs.writeFile(path.join(f.uploads, 'linebreaks.bin'), bytes);
+  const prepared = await f.tools.mail_prepare({ ...basic, text: 'first\nsecond\r\nthird',
+    html: '<p>first</p>\n<p>second</p>', bcc: ['private@example.test'],
+    attachments: [{ relativePath: 'linebreaks.bin' }] });
+  for (const filename of [prepared.emlPath, prepared.sentEmlPath]) {
+    const raw = await fs.readFile(filename);
+    assert.doesNotMatch(raw.toString('latin1'), /(?<!\r)\n/);
+    assert.deepEqual((await simpleParser(raw)).attachments[0].content, bytes);
+  }
+  const result = await f.tools.mail_send_prepared({ accountId: 'a', operationId: prepared.operationId });
+  assert.equal(result.sentCopy.saved, true);
+  assert.deepEqual(f.appended[0].raw, await fs.readFile(prepared.sentEmlPath));
+  assert.deepEqual(f.sent[0].raw, stripBccHeader(f.appended[0].raw));
+});
+
 test('prepared bytes retain Bcc only in Sent and differ from wire solely by that header', async t => {
   const f = await fixture(t);
   const bytes = Buffer.from([0, 255, 128, 1, 13, 10]);

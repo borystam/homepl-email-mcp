@@ -23,6 +23,10 @@ The current development branch adds the following improvements. The pinned
   incomplete drafts, reply threading and original forward attachments.
 - Search dates, duplicate server updates, setup cancellation, credential rollback,
   attachment paths and partial SMTP failures have additional regression coverage.
+- Multiline drafts and Sent copies use CRLF line endings for strict IMAP servers.
+  Replies retain a single known ancestor even when the parent lacks References.
+  Explicit SMTP authentication/message rejections report known failure; disconnects
+  or timeouts after transmission still report an unknown outcome.
 
 For a read-only pilot of this branch, register the server with `serve --read-only`
 (or merge `node src/cli.js config --read-only`). Check `mail_accounts.access` is
@@ -43,7 +47,7 @@ Ordinary browser-only ChatGPT cannot run this local installer or read local Code
 
 | Capability | Included behavior and limits |
 | --- | --- |
-| Folders and history | Lists all server-visible folders, including unsubscribed folders. Reads and searches the entire history retained on the server, with no automatic date cutoff. Follow every page in every relevant folder; new arrivals require a new search. |
+| Folders and history | Lists folders exposed by the IMAP client's namespace handling, including unsubscribed folders. Reads and searches retained history in those folders, with no automatic date cutoff. Follow every page in every relevant folder; new arrivals require a new search. Shared folders outside the personal namespace need verification; see the limitation below. |
 | Message metadata | UID and UIDVALIDITY, flags, size, internal date, envelope, MIME structure and additional IDs when supported by the server. Original headers preserve order, duplicates and folding; oversized headers remain available in a complete local file. |
 | Bodies | Bounded text/HTML previews plus complete body files. HTML is returned as data, not executed. Display text may undergo charset conversion or flowed-text normalization. |
 | Original messages | Streams a complete original `.eml` with all headers and MIME content; returns a local path, byte count and SHA-256. This is the byte-preserving source of truth. |
@@ -54,6 +58,11 @@ Ordinary browser-only ChatGPT cannot run this local installer or read local Code
 | Organize | Flags, move, copy, trash; create, rename, subscribe, unsubscribe and delete folders. Message mutations require observed UIDVALIDITY. Permanent message deletion requires UIDPLUS and targets one exact UID. |
 
 The connector cannot recover mail already deleted from the server or mail kept only in an old POP/local archive. It can retrieve encrypted S/MIME/PGP content, but does not decrypt it or manage decryption keys. It does not guarantee that an AI can interpret every file format. Retrieval is on demand, not an automatic mailbox backup or a continuously synchronized search index.
+
+On servers with a nonempty personal namespace prefix, the pinned IMAP library
+can omit or incorrectly prefix shared folders outside that namespace. This matches
+[a reported issue in another ImapFlow-based MCP](https://github.com/nikolausm/imap-mcp-server/issues/191).
+Shared-namespace coverage remains unresolved; it has not been tested on home.pl.
 
 ## Manual installation on Windows
 

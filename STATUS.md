@@ -21,7 +21,7 @@ history still requires every relevant folder and every cursor.
 
 ## Evidence
 
-- 99 tests passed locally on macOS/Node.js 26.5.0, with zero skipped tests.
+- 119 tests passed locally on macOS/Node.js 26.5.0, with zero skipped tests.
 - Loopback IMAP/SMTP verifies old history, sparse UIDs, raw bytes, duplicate
   headers/names, Polish text, nested RFC822 attachments, server reply drafts,
   exact deletion and partial/all-recipient SMTP rejection.
@@ -45,6 +45,43 @@ Service persistence and a real employee's MCP client/login remain unverified.
 Read-response bounds do not cap all provider metadata allocation; very sparse UID
 spaces can require many pages. Local same-user filesystem access is not a separate
 security boundary. Downloaded mail remains private local data, not application-encrypted.
+
+## Peer MCP bug audit — 2026-10-15
+
+Three confirmed local failures were reproduced before fixing them:
+
+- [imap-mcp-server PR #171](https://github.com/nikolausm/imap-mcp-server/pull/171):
+  MailComposer retained bare LF in multiline text/HTML. Two regression tests
+  failed before body normalization and now pass, including strict APPEND byte
+  validation, mixed line endings, Sent MIME and unchanged binary attachments.
+- [google_workspace_mcp PR #1065](https://github.com/taylorwilsdon/google_workspace_mcp/pull/1065):
+  replies lost the parent's single In-Reply-To ancestor when References was absent.
+  Prepared and saved replies both failed before the fix. Existing References win;
+  ambiguous and malformed parent values are not inferred into the chain.
+- [rusty-imap-mcp PR #533](https://github.com/randomparity/rusty-imap-mcp/pull/533):
+  explicit AUTH 535 and final DATA 550 responses were reported as delivery unknown.
+  Real loopback SMTP reproduced both failures. They now report rejected; socket
+  loss and timeout after DATA remain unknown. All four paths forbid another send
+  for the same operation, and provider diagnostics remain private.
+
+No local failure found for UID/sequence confusion
+([honest-magic fix](https://github.com/honest-magic/mail-mcp/commit/8b3035d3ca0098f00bda327941525716dc981648)),
+false-empty SELECT counts ([marlinjai PR #9](https://github.com/marlinjai/email-mcp/pull/9)),
+or folder/attachment identity ([PR #39](https://github.com/marlinjai/email-mcp/pull/39)).
+Synthetic probes confirmed the existing behavior. Fresh per-operation sessions
+also avoid the cached idle/cancelled-session failures in rusty-imap-mcp PRs
+[#488](https://github.com/randomparity/rusty-imap-mcp/pull/488) and
+[#628](https://github.com/randomparity/rusty-imap-mcp/pull/628).
+
+Unresolved dependency limitation: shared folders outside a nonempty personal
+namespace can be omitted or prefixed incorrectly, matching
+[imap-mcp-server issue #191](https://github.com/nikolausm/imap-mcp-server/issues/191).
+Confirmed the pinned library's path transformation and documented the limitation;
+no home.pl-specific reproduction and no dependency-internal workaround applied.
+
+An independent read-only reviewer found no blocking regression in the three
+fixes; 45 focused tests passed. The full assembled suite passes 119/119 locally.
+No production dependencies or capabilities were added in this audit.
 
 ## Independent council — 2026-10-15 00:11 Europe/Warsaw
 

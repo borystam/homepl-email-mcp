@@ -135,7 +135,9 @@ test('implicit TLS mail transport validates certificates and authentication on l
     const prepared = await client.callTool({ name: 'mail_prepare', arguments: { accountId: 'tls', to: ['recipient@example.invalid'], text: 'Synthetic test only' } });
     const operationId = JSON.parse(prepared.content[0].text).operationId;
     const sent = await client.callTool({ name: 'mail_send_prepared', arguments: { accountId: 'tls', operationId } });
-    assert.equal(JSON.parse(sent.content[0].text).smtpAccepted, null);
+    const outcome = JSON.parse(sent.content[0].text);
+    assert.equal(outcome.smtpAccepted, false);
+    assert.equal(outcome.status, 'rejected');
     const output = JSON.stringify({ read, sent });
     for (const secret of [password, wrongPassword, privateProviderError]) assert.ok(!output.includes(secret));
     assert.equal(fixture.counters().smtpDataCalls, 0, 'authentication failures must never transmit a message');

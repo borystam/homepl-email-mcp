@@ -57,6 +57,7 @@ const addr = obj => flattenAddresses((Array.isArray(obj) ? obj : obj ? [obj] : [
 const uniq = values => [...new Map(values.map(v => [v.toLowerCase(), v])).values()];
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const crlf = value => value?.replace(/\r\n|\r|\n/g, '\r\n');
 
 // Change only Bcc header fields (including folded continuations). Latin-1 is a
 // byte-preserving encoding here; MIME body bytes are never decoded or rebuilt.
@@ -143,7 +144,11 @@ function mimeAttachment(item) {
 }
 
 function referencesOf(parsed) {
-  const list = Array.isArray(parsed.references) ? parsed.references : parsed.references ? String(parsed.references).split(/\s+/) : [];
+  let list = Array.isArray(parsed.references) ? parsed.references : parsed.references ? String(parsed.references).split(/\s+/) : [];
+  // RFC 5322 3.6.4: without References, inherit a single In-Reply-To ancestor.
+  // Require an unambiguous ID; mailparser can wrap malformed bare text in <>.
+  const parent = typeof parsed.inReplyTo === 'string' ? parsed.inReplyTo.trim() : '';
+  if (!parsed.references && /^<[^<>\s@]+@[^<>\s@]+>$/.test(parent)) list = [parent];
   return uniq([...list, ...(parsed.messageId ? [parsed.messageId] : [])]).filter(v => /^<[^<>\r\n]+>$/.test(v));
 }
 
@@ -194,7 +199,9 @@ async function compose(ctx, args, { keepBcc = false, fromDraft = false, allowInc
   }
   const compiled = new MailComposer({
     from: config.displayName ? { name: config.displayName, address: config.email } : config.email,
-    to, cc, bcc, subject: subject || '', text, html,
+    // MailComposer leaves 7bit body newlines unchanged. Normalize text before
+    // MIME encoding so strict IMAP APPEND accepts drafts and Sent copies too.
+    to, cc, bcc, subject: subject || '', text: crlf(text), html: crlf(html),
     inReplyTo, references, date: new Date(), messageId: `<${randomUUID()}@homepl-email-mcp.local>`, attachments: attached,
     disableFileAccess: true, disableUrlAccess: true,
   }).compile();
@@ -254,16 +261,24 @@ async function send(ctx, args) {
     try {
       info = await ctx.withSmtp(args.accountId, transport => transport.sendMail({ envelope: current.envelope, raw }));
     } catch (error) {
-      // Nodemailer reports an explicit RCPT failure when every recipient was
-      // rejected, before DATA. Do not label that known failure as delivery-unknown.
-      // Anything less conclusive (including a partial envelope or socket loss)
-      // remains unknown. Neither outcome permits retrying this operation ID.
+      // Only explicit negative replies at recognized SMTP stages establish
+      // rejection. Socket loss and timeouts can follow acceptance and stay
+      // unknown. Neither outcome permits retrying this operation ID.
+      const negativeReply = Number.isInteger(error?.responseCode) && error.responseCode >= 400 && error.responseCode <= 599;
       const rejected = new Set((Array.isArray(error?.rejected) ? error.rejected : []).filter(v => typeof v === 'string').map(v => v.toLowerCase()));
-      if (error?.code === 'EENVELOPE' && error.command === 'RCPT TO' && error.responseCode >= 400 && error.responseCode <= 599 && current.envelope.to.length && current.envelope.to.every(v => rejected.has(v.toLowerCase()))) {
+      let rejectionReason;
+      if (negativeReply && error.code === 'EAUTH' && /^AUTH(?: [A-Z0-9_-]+)?$/.test(error.command || '')) {
+        rejectionReason = 'SMTP rejected authentication before transmitting the message. Check account credentials before preparing a new message; this operation cannot be retried.';
+      } else if (negativeReply && error.code === 'EMESSAGE' && error.command === 'DATA') {
+        rejectionReason = 'SMTP explicitly rejected the message. Check the message and account limits before preparing a new message; this operation cannot be retried.';
+      } else if (negativeReply && error.code === 'EENVELOPE' && error.command === 'RCPT TO' && current.envelope.to.length && current.envelope.to.every(v => rejected.has(v.toLowerCase()))) {
+        rejectionReason = 'SMTP rejected every recipient before transmitting the message. Correct the addresses or account issue before preparing a new message; this operation cannot be retried.';
+      }
+      if (rejectionReason) {
         current.status = 'rejected';
         current.outcome = { smtpAccepted: false, accepted: [], rejected: current.envelope.to, retryAllowed: false };
         await durableWrite(path.join(dir, 'state.json'), json(current)).catch(() => {});
-        return { operationId: args.operationId, status: 'rejected', ...current.outcome, reason: 'SMTP rejected every recipient before transmitting the message. Correct the addresses or account issue before preparing a new message; this operation cannot be retried.' };
+        return { operationId: args.operationId, status: 'rejected', ...current.outcome, reason: rejectionReason };
       }
       current.status = 'unknown'; current.outcome = { smtpAccepted: null, retryAllowed: false };
       await durableWrite(path.join(dir, 'state.json'), json(current)).catch(() => {});
