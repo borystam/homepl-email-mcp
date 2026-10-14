@@ -98,8 +98,6 @@ test('invalid ports, credential-bearing URLs, path IDs and control characters ar
 });
 
 test('config refuses symlink files instead of reading unrelated files', async t => {
-  // Creating symlinks on Windows can require a policy this test environment does not have.
-  if (process.platform === 'win32') { t.skip('Symlink creation requires OS developer-mode permission.'); return; }
   const { directory, store } = await fixture(t);
   const target = join(directory, 'outside.json');
   await writeFile(target, JSON.stringify({ version: 1, accounts: [account()] }));
