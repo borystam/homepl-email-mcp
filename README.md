@@ -4,6 +4,31 @@ Connect a local AI agent to a home.pl mailbox through encrypted IMAP and SMTP. E
 
 This is an independent community project, not an official home.pl product. Version **0.1.0** is an initial release. It has local automated tests; a live home.pl mailbox has **not** yet been tested. Pilot it with one employee before repeating the installation for the team.
 
+## Unreleased hardening changes
+
+The current development branch adds the following improvements. The pinned
+**v0.1.0 installation prompt below does not include them yet**.
+
+- `serve --read-only` exposes only mailbox reading tools. `config --read-only`
+  generates the corresponding client settings; write tools are absent from the
+  MCP catalog. This limits this connector process, not the mailbox password's
+  permissions in other applications. Default `serve` retains full functionality.
+- `mail_get_messages` reads up to ten exact message references in one call,
+  preserving input order and a separate result/error for each. It defaults to
+  metadata and headers; request bodies explicitly.
+- Read results exceeding 64 KiB are saved completely to private JSON files.
+  Follow `completeResultFile` (or batch `fullResultFile`) for full data and keep
+  following pagination. A shortened inline response is not missing history.
+- `mail_save_draft` supports new/reply/reply-all/forward drafts, including
+  incomplete drafts, reply threading and original forward attachments.
+- Search dates, duplicate server updates, setup cancellation, credential rollback,
+  attachment paths and partial SMTP failures have additional regression coverage.
+
+For a read-only pilot of this branch, register the server with `serve --read-only`
+(or merge `node src/cli.js config --read-only`). Check `mail_accounts.access` is
+`read-only` and that sending/deletion tools are absent. Inspect the commit before
+installing development code; do not call this branch the released v0.1.0 package.
+
 ## Give this to the employee's agent
 
 Paste this into **an agent with access to the employee's computer and support for local stdio MCP servers**:
@@ -25,7 +50,7 @@ Ordinary browser-only ChatGPT cannot run this local installer or read local Code
 | Attachments | Downloads arbitrary MIME parts by part ID, including inline images, binary files and attached messages. Repeated filenames are unambiguous. MIME transfer encodings are decoded; inline display text can be normalized. The agent needs suitable file tools to interpret downloaded content. |
 | Search | IMAP search across headers and message text, with dates, addresses, flags and size filters. Searches are per folder and paginated. It does not OCR images or search inside binary attachments. Header searches can find related messages; there is no claim of automatic complete conversation reconstruction. |
 | Compose and send | New mail, replies, reply-all, forwards, CC/BCC, text/HTML and local attachments. A prepared operation has a preview and a separate send action. The transmitted MIME is retained locally; Sent copies retain BCC metadata and therefore can differ by that header. SMTP acceptance and Sent-copy saving are reported separately; uncertain sends must not be retried blindly. |
-| Drafts | Save and update server drafts, then prepare them for sending. Updating requires UIDPLUS and returns a new UID. Sending a prepared server draft retains the source draft. |
+| Drafts | Save and update server drafts, then prepare them for sending. On the development branch, save reply/reply-all/forward and incomplete drafts as well. Updating requires UIDPLUS and returns a new UID. Sending a prepared server draft retains the source draft. |
 | Organize | Flags, move, copy, trash; create, rename, subscribe, unsubscribe and delete folders. Message mutations require observed UIDVALIDITY. Permanent message deletion requires UIDPLUS and targets one exact UID. |
 
 The connector cannot recover mail already deleted from the server or mail kept only in an old POP/local archive. It can retrieve encrypted S/MIME/PGP content, but does not decrypt it or manage decryption keys. It does not guarantee that an AI can interpret every file format. Retrieval is on demand, not an automatic mailbox backup or a continuously synchronized search index.
@@ -63,7 +88,7 @@ codex mcp add homepl-email -- $homeplNode $homeplCli serve
 codex mcp list
 ```
 
-If the Codex CLI is unavailable, run `node src/cli.js config`. It prints a ready-to-merge Codex TOML entry and a JSON `mcpServers` entry for clients that use that format, with this machine's absolute paths. Merge the appropriate entry into existing client settings; do not replace the whole settings file. No mailbox password belongs in either configuration. [Official Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
+If the Codex CLI is unavailable, run `node src/cli.js config`. It prints a ready-to-merge Codex TOML entry and a JSON `mcpServers` entry for clients that use that format, with this machine's absolute paths. Merge the appropriate entry into existing client settings; do not replace the whole settings file. No mailbox password belongs in either configuration. On the development branch, an explicit `HOME_MAIL_DATA_DIR` is retained in the generated client `env` settings so a separately launched desktop client uses the same account store. [Official Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
 
 Restart or reload the client as its MCP configuration requires. A configuration entry alone does not prove the connection works: ask the agent to call `mail_accounts`, `mail_folders`, and `mail_list_messages` with `pageSize: 3`. It can inspect headers using `mail_get_message` with `includeBodies: false`. Initial verification should not send, change or delete any mail.
 
@@ -102,6 +127,8 @@ Removal deletes the saved mailbox credential and account entry. Existing downloa
 | Server configured but tools absent | Check absolute Node/CLI paths, run `node src/cli.js doctor`, then reload the MCP client. Check workspace restrictions and whether this chat actually runs with local MCP access. |
 | Tools exist but account is missing | Run setup as the same OS user and with the same `HOME_MAIL_DATA_DIR` as the MCP process. |
 | A search page is empty but has a cursor | Continue the cursor. Large gaps between UIDs can require another bounded scan. Search every relevant folder before claiming completeness. |
+| `CONFIG_BUSY` | Another setup is updating accounts. Wait for it. After a crash, stop all setup processes and inspect saved accounts before manually removing `.accounts.lock` from the data directory. Locks are never automatically stolen. |
+| `CONFIG_RECOVERY_REQUIRED` | Credential rollback could not be confirmed. Reconnect that account through the private setup form before using it. Never dump the credential store. |
 | `UIDVALIDITY_CHANGED` | Re-list/search the folder and use the newly returned identifiers. |
 | Send timed out or Sent copy failed | Inspect `mail_outbox_status`. SMTP may already have accepted the message. Do not automatically create another send operation. |
 
@@ -115,3 +142,36 @@ npm test
 ```
 
 Tests use synthetic data and local fixtures, not employee accounts, and do not send real email. Passing local tests does not establish compatibility with a particular home.pl account or every client/OS combination.
+
+## Connector design comparison
+
+Checked 15 October 2026 using public documentation and schemas, not private
+connector source or authenticated mailbox access. The Codex plugin directory
+confirms Gmail and Outlook Email plugins; its listing does not expose their
+complete implementation. OpenAI's separately documented connector API has
+metadata/search, single-message reads and batch reads. That is the basis for our
+bounded batch tool, not a claim that Codex's live plugin is limited to that API.
+[OpenAI connector interfaces](https://developers.openai.com/api/docs/guides/tools-connectors-mcp).
+
+Google publishes a remote Gmail MCP with OAuth and provider-native thread IDs;
+its `get_thread` schema distinguishes metadata from body retrieval and returns
+attachment metadata. Its draft schema supports reply context, but contradicts
+its prose about attachment support, so we do not treat that as verified behavior.
+[Google setup](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server),
+[thread schema](https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/get_thread),
+[draft schema](https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/create_draft).
+
+Claude's Microsoft 365 connector is an Anthropic-hosted delegated OAuth/Graph
+proxy with separately enabled write capabilities. It targets Microsoft 365
+work/school tenants, not arbitrary Exchange servers; its documented write tools
+reject attachments and its search excludes Online Archive. Our local IMAP/SMTP
+connector retains raw MIME and attachment-file access without a hosted OAuth
+service. Provider-native thread IDs and OAuth cannot simply be copied into a
+home.pl password-based IMAP connection.
+[Anthropic security guide](https://support.claude.com/en/articles/12684923-microsoft-365-connector-security-guide).
+
+Account-wide search orchestration and exact-header related-message discovery
+remain useful future conveniences. Current searches still require every relevant
+folder and cursor; automatic complete threading is not implemented. The next
+validation step is one authorized live home.pl pilot, rather than adding an index,
+background sync or hosted infrastructure.

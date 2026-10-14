@@ -1,10 +1,18 @@
-import { mkdir, readFile, writeFile, rename, unlink, lstat, chmod } from 'node:fs/promises';
+import { mkdir, open, readFile, writeFile, rename, unlink, lstat, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const SERVICE = 'ccservices.homepl-email-mcp';
 const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
+export const configErrorDescriptions = Object.freeze({
+  CONFIG_BUSY: 'Another account update is active. Wait for it to finish before retrying. If a setup process crashed, close all setup processes before manually removing .accounts.lock from the mail data directory.',
+  CONFIG_CANCELLED: 'Account setup was cancelled before completion. No new account settings were retained.',
+  CONFIG_RECOVERY_REQUIRED: 'An account update failed and its previous settings or credential could not be fully restored. Check the account and run setup again before using it.',
+  CONFIG_LOCK_RELEASE_FAILED: 'The account update finished, but its lock could not be removed. Inspect the saved accounts before retrying; close setup processes before manually removing .accounts.lock.',
+});
+const configError = code => Object.assign(new Error(configErrorDescriptions[code]), { code });
+const checkCancelled = signal => { if (signal?.aborted) throw configError('CONFIG_CANCELLED'); };
 
 export function dataDir() {
   const defaultDirectory = process.platform === 'win32'
@@ -90,6 +98,33 @@ export function createConfigStore({ directory = dataDir, keyring = nativeKeyring
     if (process.platform !== 'win32') await chmod(root(), 0o700);
   }
 
+  // The promise queue handles this instance; the exclusive file also protects
+  // against a second setup process reading and replacing the same old snapshot.
+  // A leftover lock is deliberately not stolen: an interrupted keyring change
+  // needs operator inspection rather than a guessed stale-process timeout.
+  async function mutate(operation, signal) {
+    return serial(async () => {
+      checkCancelled(signal);
+      await ensureDirectory();
+      const lockPath = join(root(), '.accounts.lock');
+      let lock;
+      try { lock = await open(lockPath, 'wx', 0o600); }
+      catch (error) {
+        if (error.code === 'EEXIST') throw configError('CONFIG_BUSY');
+        throw error;
+      }
+      try {
+        await lock.writeFile(`${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`);
+        checkCancelled(signal);
+        return await operation();
+      } finally {
+        await lock.close();
+        try { await unlink(lockPath); }
+        catch { throw configError('CONFIG_LOCK_RELEASE_FAILED'); }
+      }
+    });
+  }
+
   async function readAccounts() {
     try {
       const stat = await lstat(filename());
@@ -134,36 +169,52 @@ export function createConfigStore({ directory = dataDir, keyring = nativeKeyring
     if (typeof password !== 'string' || !password) throw new Error('The saved mailbox credential is missing. Run homepl-email-mcp setup again.');
     return password;
   }
-  async function saveAccount(input, password) {
+  async function saveAccount(input, password, { signal } = {}) {
     const account = validateAccount(input);
     if (typeof password !== 'string' || !password || password.length > 4096 || password.includes('\0')) throw new Error('Enter the mailbox password.');
-    return serial(async () => {
-      await ensureDirectory();
+    return mutate(async () => {
       const accounts = await readAccounts();
       const previousPassword = await keyringCall('getPassword', account.id);
-      await keyringCall('setPassword', account.id, password);
+      checkCancelled(signal);
+      let metadataCommitted = false;
       try {
+        // A native credential write may take effect and still reject. Include
+        // it in the compensation boundary, not only the JSON file replacement.
+        await keyringCall('setPassword', account.id, password);
+        checkCancelled(signal);
         await writeAccounts([...accounts.filter(a => a.id !== account.id), account]);
-      } catch {
+        metadataCommitted = true;
+        checkCancelled(signal);
+      } catch (error) {
+        let recoveryFailed = false;
+        if (metadataCommitted) {
+          try { await writeAccounts(accounts); } catch { recoveryFailed = true; }
+        }
         try {
           if (previousPassword !== null && previousPassword !== undefined) await keyringCall('setPassword', account.id, previousPassword);
           else await keyringCall('deletePassword', account.id);
-        } catch { /* Never leak errors or credentials from the platform keyring. */ }
+        } catch { recoveryFailed = true; }
+        if (recoveryFailed) throw configError('CONFIG_RECOVERY_REQUIRED');
+        if (error.code === 'CONFIG_CANCELLED') throw configError('CONFIG_CANCELLED');
         throw new Error('Account settings could not be saved. Check that the mail data directory is writable.');
       }
       return account;
-    });
+    }, signal);
   }
   async function removeAccount(id) {
     validateId(id);
-    return serial(async () => {
+    return mutate(async () => {
       const accounts = await readAccounts();
       if (!accounts.some(a => a.id === id)) throw new Error('Mail account not found.');
       const previousPassword = await keyringCall('getPassword', id);
-      await keyringCall('deletePassword', id);
-      try { await writeAccounts(accounts.filter(a => a.id !== id)); }
+      try {
+        await keyringCall('deletePassword', id);
+        await writeAccounts(accounts.filter(a => a.id !== id));
+      }
       catch {
-        if (previousPassword !== null && previousPassword !== undefined) await keyringCall('setPassword', id, previousPassword);
+        try {
+          if (previousPassword !== null && previousPassword !== undefined) await keyringCall('setPassword', id, previousPassword);
+        } catch { throw configError('CONFIG_RECOVERY_REQUIRED'); }
         throw new Error('Account settings could not be removed. Check that the mail data directory is writable.');
       }
       return { removed: true, id };

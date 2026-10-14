@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createConfigStore } from '../src/config.js';
 import { startSetup } from '../src/setup.js';
 
 function request(url, { method = 'GET', headers = {}, body } = {}) {
@@ -137,3 +141,81 @@ test('a verification still pending at expiry cannot save credentials afterward',
   assert.equal((await pending).status, 410);
   assert.equal(calls.length, 0);
 });
+
+test('a form body completed after expiry cannot start authentication', async t => {
+  const { setup, token, calls } = await fixture(t, { timeoutMs: 60 });
+  const body = new URLSearchParams({ token, email: 'person@example.pl', password: 'private-mailbox-password', imapHost: 'serwer123456.home.pl' }).toString();
+  let req;
+  const response = new Promise((resolve, reject) => {
+    req = http.request(setup.url, {
+      method: 'POST', agent: false,
+      headers: { origin: new URL(setup.url).origin, 'content-type': 'application/x-www-form-urlencoded' },
+    }, res => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject);
+  });
+  req.write(body.slice(0, 8));
+  assert.deepEqual(await setup.completion, { status: 'expired' });
+  req.end(body.slice(8));
+  assert.equal(await response, 410);
+  assert.deepEqual(calls, []);
+});
+
+test('concurrent form submissions cannot verify or save a second account', async t => {
+  let release;
+  let started;
+  const entered = new Promise(resolve => { started = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  const { submit, calls } = await fixture(t, { verify: async () => { started(); return held; } });
+  const first = submit();
+  await entered;
+  try {
+    assert.equal((await submit({ email: 'second@example.pl' })).status, 409);
+    assert.equal(calls.length, 0);
+  } finally { release({}); }
+  assert.equal((await first).status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].account.email, 'person@example.pl');
+});
+
+for (const shutdown of ['cancel', 'expire']) {
+  test(`setup ${shutdown} during a credential save waits for rollback and retains the previous account`, async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'homepl-setup-save-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const secrets = new Map();
+    let release;
+    let started;
+    const entered = new Promise(resolve => { started = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    const store = createConfigStore({ directory, keyring: {
+      async getPassword(id) { return secrets.get(id) ?? null; },
+      async setPassword(id, password) {
+        secrets.set(id, password);
+        if (password === 'private-mailbox-password') { started(); await held; }
+      },
+      async deletePassword(id) { secrets.delete(id); },
+    } });
+    await store.saveAccount({ id: 'existing-account', email: 'person@example.pl', displayName: 'Previous name', imap: { host: 'serwer123456.home.pl', port: 993 }, smtp: { host: 'serwer123456.home.pl', port: 465 } }, 'old-password');
+    const { setup, submit } = await fixture(t, {
+      timeoutMs: shutdown === 'expire' ? 80 : 1000,
+      listAccounts: store.listAccounts,
+      saveAccount: store.saveAccount,
+    });
+    const submitting = submit({ displayName: 'New name' });
+    let completed = false;
+    setup.completion.then(() => { completed = true; });
+    await entered;
+    if (shutdown === 'cancel') setup.close();
+    else await new Promise(resolve => setTimeout(resolve, 100));
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(completed, false, 'setup must not announce completion while credentials are still changing');
+    } finally { release(); }
+    assert.equal((await submitting).status, 410);
+    assert.deepEqual(await setup.completion, { status: shutdown === 'cancel' ? 'cancelled' : 'expired' });
+    assert.equal(await store.getPassword('existing-account'), 'old-password');
+    assert.equal((await store.getAccount('existing-account')).displayName, 'Previous name');
+  });
+}

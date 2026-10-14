@@ -1,35 +1,71 @@
-# Release status
+# Release and validation status
 
-Target: homepl-email-mcp v0.1.0 for a small Windows-based company using home.pl.
-The supported result is a local MCP connector with guided credential entry and
-access to all retained server mail, raw messages, metadata and attachment files.
+Released version: v0.1.0. The current `codex/connector-hardening` work is an
+unreleased improvement set; installation pinned to v0.1.0 does not receive it.
+No real home.pl mailbox has been accessed or verified.
 
-Implemented: account setup; OS credential storage; folder listing; all-history
-UID pagination and search; ordered repeated headers; MIME metadata and body files;
-raw .eml and attachment download; prepare/send/reply/reply-all/forward; server
-drafts and updates; flags; move/copy/trash; exact permanent deletion; folder management.
+## Current result
 
-Validation: all 43 automated tests passed in [CI run 38644428031](https://github.com/borystam/homepl-email-mcp/actions/runs/38644428031)
-on Windows with Node.js 22 and 24, and macOS and Ubuntu with Node.js 24. Tests
-include actual loopback IMAP/SMTP and MCP protocol/stdio checks. Native credential
-store round trips passed on Windows and macOS; Linux Secret Service persistence
-was not exercised in CI. Independent review prompted a fix retaining Bcc metadata
-in Sent copies. A clean public clone on macOS passed a production-only dependency
-installation (`npm ci --omit=dev --ignore-scripts`), native-binding diagnostics,
-and the real stdio MCP launch test. Dependency audit reported zero vulnerabilities.
-The empty local setup form was visually checked; no credentials were entered.
-The repository is public, with release distribution limited to tracked source files.
+Added an optional read-only MCP process, bounded batch metadata reads, and server
+reply/reply-all/forward drafts. Fixed confirmed failures in dates, UIDNEXT,
+duplicate FETCH updates, decoded preview budgets, oversized output, stream cleanup,
+address groups, inline CID resources, incomplete drafts, SMTP rejection reporting,
+attachment path replacement, account-update races and cancellation/rollback.
+Generated client config preserves a custom data directory and fixed error codes
+provide recovery guidance without provider diagnostics or credentials.
 
-Not yet verified: a real home.pl mailbox. No live customer email was read or sent.
-Provider-specific folder names and external-client access must be checked during
-the first employee's guided setup. Setup tests IMAP and SMTP authentication without
-sending a message.
+The README contains the sourced OpenAI/Google/Anthropic connector comparison and
+explicitly distinguishes public schemas from private implementations. Account-wide
+search orchestration and related-message helpers remain deferred; full retained
+history still requires every relevant folder and every cursor.
 
-Next observable outcome: the first employee completes local setup on Windows,
-saves their mailbox credential through the private form, and successfully calls
-MCP tools to list folders and read sample message metadata without sending or
-changing mail.
+## Evidence
 
-Long-running review cadence: implementation began 2026-10-14 at approximately
-21:46 UTC. Convene the three-person independent council if active work reaches
-22:16 UTC; do not count idle time toward the cadence.
+- 99 tests passed locally on macOS/Node.js 26.5.0, with zero skipped tests.
+- Loopback IMAP/SMTP verifies old history, sparse UIDs, raw bytes, duplicate
+  headers/names, Polish text, nested RFC822 attachments, server reply drafts,
+  exact deletion and partial/all-recipient SMTP rejection.
+- Real implicit TLS fixtures accept the trusted test certificate and correct
+  credentials; wrong passwords, untrusted issuers and mismatched hostnames fail.
+- MCP in-memory and actual child-process stdio tests verify schemas, read-only
+  discovery, batch per-message errors, output bounds and sanitized diagnostics.
+- Setup/config tests cover CSRF/origin/Host checks, expired/slow forms, overlapping
+  requests, cross-process locking, partial native failures, cancellation and rollback.
+- File tests cover interrupted downloads, 8 MiB streaming, long Unicode filenames,
+  leaf/ancestor symlink replacement and prepared-message integrity/retry prevention.
+- Production dependency audit: zero reported vulnerabilities. `git diff --check`
+  passes. No new production dependencies were added.
+- CI runs the suite on Windows, macOS and Ubuntu with Node.js 22 and 24; consult
+  the pull request checks for execution results. Windows/macOS also run the
+  synthetic native credential-store round trip. TLS tests explicitly skip when
+  OpenSSL is unavailable, rather than claim TLS validation without running it.
+
+Limits: synthetic servers are not proof of home.pl-specific behavior. Linux Secret
+Service persistence and a real employee's MCP client/login remain unverified.
+Read-response bounds do not cap all provider metadata allocation; very sparse UID
+spaces can require many pages. Local same-user filesystem access is not a separate
+security boundary. Downloaded mail remains private local data, not application-encrypted.
+
+## Independent council — 2026-10-15 00:11 Europe/Warsaw
+
+Three fresh-context advisors inspected actual source/results independently:
+
+- Product owner: the hardening addresses real failures; stop adding capabilities,
+  document the release boundary and deliver the reviewable change.
+- Reliability engineer: 93 tests passed at the review snapshot, but reproduced an
+  ancestor-symlink attachment bypass. The new regression failed before the fix;
+  the assembled suite now passes 99 tests.
+- First-time operator: the pilot flow is concrete; generated config lost a custom
+  data directory. The override is now retained and verified by a CLI regression.
+
+Accepted: fix the demonstrated gaps, document read-only/batch behavior, keep this
+unreleased until review, and stop broad feature expansion. Deferred account-wide
+search/thread reconstruction because they do not replace the missing live pilot.
+Retained deployment-platform instructions; the expanded CI matrix verifies the
+supported targets without changing the development workstation.
+
+Next testable user outcome: after reviewing and installing the intended commit,
+one authorized employee connects through the private local form and actual MCP
+calls confirm read-only access, folder listing, an old message and its attachment.
+No SMTP send or mailbox mutation is part of that pilot. Next independent council
+is due after another 30 minutes of active work (approximately 00:41 Warsaw time).

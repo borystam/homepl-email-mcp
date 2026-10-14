@@ -38,9 +38,9 @@ const raw = [
   '--fixture-boundary--', '',
 ].join('\r\n');
 
-async function environment(t) {
+async function environment(t, options = {}) {
   const dataDir = await mkdtemp(join(tmpdir(),'homepl-integration-'));
-  const messages = [2,9,30,12005].map(uid => ({uid, raw: uid === 2 ? raw : raw.replace('Old customer agreement',`History ${uid}`).replace('<old-message@example.invalid>',`<history-${uid}@example.invalid>`), internaldate:'01-Jan-2014 00:00:00 +0000', flags: uid === 9 ? ['\\Deleted'] : []}));
+  const messages = options.messages ?? [2,9,30,12005].map(uid => ({uid, raw: uid === 2 ? raw : raw.replace('Old customer agreement',`History ${uid}`).replace('<old-message@example.invalid>',`<history-${uid}@example.invalid>`), internaldate:'01-Jan-2014 00:00:00 +0000', flags: uid === 9 ? ['\\Deleted'] : []}));
   const imap = hoodiecrow({
     plugins:['ID','AUTH-PLAIN','SASL-IR','ENABLE','UIDPLUS','MOVE','SPECIAL-USE','NAMESPACE'],
     users:{'employee@example.invalid':{password:'fixture-only'}},
@@ -48,6 +48,10 @@ async function environment(t) {
   });
   const received = [];
   const smtp = new SMTPServer({secure:false, disabledCommands:['STARTTLS'], logger:false,
+    onRcptTo(address,_session,callback) {
+      if ((options.rejectRecipients || []).includes(address.address)) return callback(Object.assign(new Error('Synthetic recipient rejection'), { responseCode: 550 }));
+      callback();
+    },
     onAuth(auth,_session,callback){ callback(auth.username === 'employee@example.invalid' && auth.password === 'fixture-only' ? null : new Error('invalid fixture login'), {user:'fixture'}); },
     onData(stream,_session,callback){ const chunks=[];stream.on('data', c=>chunks.push(c));stream.on('end',()=>{received.push(Buffer.concat(chunks));callback();}); },
   });
@@ -151,4 +155,94 @@ test('MCP client handshake, tool discovery, schema validation and actual mail ca
   assert.deepEqual(JSON.parse(result.content[0].text).messages.map(m=>m.uid),[12005,30]);
   const invalid=await client.callTool({name:'mail_get_message',arguments:{accountId:'work',folder:'INBOX',uid:2}});
   assert.equal(invalid.isError,true);
+});
+
+test('real SMTP: partial recipient acceptance is explicit, all-recipient rejection is definitive', {timeout:30000}, async t => {
+  const { call, received } = await environment(t, { rejectRecipients: ['reject@example.invalid'] });
+  const partial = await call('mail_prepare', { accountId: 'work', to: ['ok@example.invalid', 'reject@example.invalid'], text: 'Synthetic partial delivery' });
+  const result = await call('mail_send_prepared', { accountId: 'work', operationId: partial.operationId });
+  assert.equal(result.smtpAccepted, true);
+  assert.deepEqual(result.accepted, ['ok@example.invalid']);
+  assert.deepEqual(result.rejected, ['reject@example.invalid']);
+  assert.equal(result.retryAllowed, false);
+  assert.equal(received.length, 1);
+  const rejected = await call('mail_prepare', { accountId: 'work', to: ['reject@example.invalid'], text: 'Must never reach DATA' });
+  const failure = await call('mail_send_prepared', { accountId: 'work', operationId: rejected.operationId });
+  assert.equal(failure.status, 'rejected');
+  assert.equal(failure.smtpAccepted, false);
+  await call('mail_send_prepared', { accountId: 'work', operationId: rejected.operationId });
+  assert.equal(received.length, 1);
+});
+
+test('real IMAP: reply draft preserves threading, Reply-To and server draft flags without SMTP', {timeout:30000}, async t => {
+  const { call, received } = await environment(t);
+  const saved = await call('mail_save_draft', { accountId: 'work', kind: 'reply', folder: 'INBOX', uid: 2, uidValidity: '12345', text: 'Reply draft only' });
+  const ref = { accountId: 'work', folder: saved.folder, uid: saved.uid, uidValidity: saved.uidValidity };
+  const downloaded = await call('mail_download_raw', ref);
+  const draft = await simpleParser(await readFile(downloaded.file.path));
+  assert.equal(draft.to.value[0].address, 'replies@example.invalid');
+  assert.equal(draft.inReplyTo, '<old-message@example.invalid>');
+  assert.ok(draft.references.includes('<old-message@example.invalid>'));
+  const metadata = await call('mail_get_message', { ...ref, includeBodies: false });
+  assert.ok(metadata.flags.includes('\\Draft'));
+  assert.equal(received.length, 0);
+});
+
+test('real IMAP: Polish charset, inline resource and attached RFC822 parts remain retrievable', {timeout:30000}, async t => {
+  const nested = [
+    'From: nested@example.invalid', 'To: employee@example.invalid', 'Subject: Nested',
+    'MIME-Version: 1.0', 'Content-Type: multipart/mixed; boundary="inner"', '',
+    '--inner', 'Content-Type: text/plain', '', 'Nested body',
+    '--inner', 'Content-Type: application/octet-stream; name="nested.bin"',
+    'Content-Disposition: attachment; filename="nested.bin"', 'Content-Transfer-Encoding: base64', '', binaryOne.toString('base64'), '--inner--', '',
+  ].join('\r\n');
+  const special = [
+    'From: customer@example.invalid', 'To: employee@example.invalid', 'Subject: =?UTF-8?Q?Za=C5=BC=C3=B3=C5=82=C4=87?=',
+    'MIME-Version: 1.0', 'Content-Type: multipart/mixed; boundary="outer"', '',
+    '--outer', 'Content-Type: text/plain; charset=iso-8859-2', 'Content-Transfer-Encoding: quoted-printable', '', 'Za=BF=F3=B3=E6 g=EA=B6l=B1 ja=BC=F1',
+    '--outer', 'Content-Type: image/png', 'Content-Disposition: inline; filename="logo.png"', 'Content-ID: <logo>', 'Content-Transfer-Encoding: base64', '', binaryTwo.toString('base64'),
+    '--outer', 'Content-Type: message/rfc822', 'Content-Disposition: attachment; filename="nested.eml"', '', nested,
+    '--outer--', '',
+  ].join('\r\n');
+  const { call } = await environment(t, { messages: [{ uid: 7, raw: special, flags: [] }] });
+  const ref = { accountId: 'work', folder: 'INBOX', uid: 7, uidValidity: '12345' };
+  const message = await call('mail_get_message', ref);
+  assert.equal(message.envelope.subject, 'Zażółć');
+  assert.ok(message.bodies.some(body => body.preview.includes('Zażółć gęślą jaźń')));
+  const logo = message.parts.find(part => part.filename === 'logo.png');
+  assert.ok(logo);
+  const logoDownload = await call('mail_download_attachment', { ...ref, partId: logo.partId });
+  assert.deepEqual(await readFile(logoDownload.file.path), binaryTwo);
+  const attachment = message.parts.find(part => part.filename === 'nested.bin');
+  assert.ok(attachment, JSON.stringify(message.parts));
+  const downloaded = await call('mail_download_attachment', { ...ref, partId: attachment.partId });
+  assert.deepEqual(await readFile(downloaded.file.path), binaryOne);
+  const exact = await call('mail_download_raw', ref);
+  assert.deepEqual(await readFile(exact.file.path), Buffer.from(special));
+});
+
+test('MCP read-only mode excludes mutation tools and batch reads preserve per-message outcomes', {timeout:30000}, async t => {
+  const { ctx, account } = await environment(t);
+  const server = await makeServer({ ctx, readOnly: true, listAccounts: async () => [account] });
+  const client = new Client({ name: 'readonly-fixture', version: '1.0' });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(st), client.connect(ct)]);
+  t.after(async () => { await client.close(); await server.close(); });
+  const listed = await client.listTools();
+  assert.ok(listed.tools.every(tool => tool.annotations.readOnlyHint === true));
+  assert.ok(!listed.tools.some(tool => tool.name === 'mail_send_prepared'));
+  const accounts = await client.callTool({ name: 'mail_accounts', arguments: {} });
+  assert.equal(JSON.parse(accounts.content[0].text).access, 'read-only');
+  const refs = [2, 999, 9].map(uid => ({ accountId: 'work', folder: 'INBOX', uid, uidValidity: '12345' }));
+  const result = await client.callTool({ name: 'mail_get_messages', arguments: { messages: refs } });
+  assert.ok(!result.isError);
+  const parsed = JSON.parse(result.content[0].text);
+  assert.equal(parsed.complete, false);
+  assert.deepEqual(parsed.results.map(item => item.reference), refs);
+  assert.equal(parsed.results[0].result.uid, 2);
+  assert.deepEqual(parsed.results[0].result.bodies, []);
+  assert.equal(parsed.results[1].error, 'MESSAGE_NOT_FOUND');
+  assert.equal(parsed.results[2].result.uid, 9);
+  const denied = await client.callTool({ name: 'mail_manage_folder', arguments: { accountId: 'work', action: 'create', folder: 'Denied' } });
+  assert.equal(denied.isError, true);
 });

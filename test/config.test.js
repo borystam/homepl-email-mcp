@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { createConfigStore, validateAccount, dataDir } from '../src/config.js';
@@ -20,7 +22,7 @@ async function fixture(t, customKeyring) {
     async setPassword(id, password) { secrets.set(id, password); },
     async deletePassword(id) { return secrets.delete(id); },
   };
-  return { directory, secrets, store: createConfigStore({ directory, keyring }) };
+  return { directory, secrets, keyring, store: createConfigStore({ directory, keyring }) };
 }
 
 test('data directory uses the native per-user location and supports an explicit override', () => {
@@ -103,4 +105,136 @@ test('config refuses symlink files instead of reading unrelated files', async t 
   await writeFile(target, JSON.stringify({ version: 1, accounts: [account()] }));
   await symlink(target, join(directory, 'accounts.json'));
   await assert.rejects(store.listAccounts(), /could not be read/);
+});
+
+test('independent config stores refuse overlapping mutations instead of losing another account', async t => {
+  const { directory, keyring, store } = await fixture(t);
+  const other = createConfigStore({ directory, keyring });
+  let release;
+  let started;
+  const entered = new Promise(resolve => { started = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const setPassword = keyring.setPassword;
+  keyring.setPassword = async (id, password) => {
+    await setPassword(id, password);
+    if (id === 'a') { started(); await blocked; }
+  };
+  const saving = store.saveAccount(account('a'), 'password-a');
+  await entered;
+  try {
+    await assert.rejects(other.saveAccount(account('b'), 'password-b'), { code: 'CONFIG_BUSY' });
+    await assert.rejects(other.removeAccount('a'), { code: 'CONFIG_BUSY' });
+    const child = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+      const { createConfigStore } = await import(process.argv[1]);
+      const store = createConfigStore({ directory: process.argv[2], keyring: {
+        async getPassword() { throw new Error('Unexpected keyring access'); }
+      } });
+      try {
+        await store.removeAccount('a');
+        process.exitCode = 1;
+      } catch (error) {
+        if (error.code !== 'CONFIG_BUSY') throw error;
+        process.stdout.write(error.code);
+      }
+    `, new URL('../src/config.js', import.meta.url).href, directory]);
+    assert.equal(child.stdout, 'CONFIG_BUSY');
+    assert.equal(child.stderr, '');
+  } finally {
+    release();
+    await saving;
+  }
+  await other.saveAccount(account('b'), 'password-b');
+  assert.deepEqual((await store.listAccounts()).map(a => a.id).sort(), ['a', 'b']);
+  assert.equal(await store.getPassword('a'), 'password-a');
+  assert.equal(await other.getPassword('b'), 'password-b');
+});
+
+test('credential writes that change a secret and then fail restore the previous credential', async t => {
+  const { store, keyring, secrets } = await fixture(t);
+  await store.saveAccount(account(), 'old-password');
+  keyring.setPassword = async (id, password) => {
+    secrets.set(id, password);
+    if (password === 'new-password') throw new Error('native secret new-password AUTH transcript');
+  };
+  await assert.rejects(store.saveAccount({ ...account(), displayName: 'Should not persist' }, 'new-password'), error => {
+    assert.doesNotMatch(error.message, /new-password|AUTH|transcript/);
+    return true;
+  });
+  assert.equal(await store.getPassword('test-account'), 'old-password');
+  assert.equal((await store.getAccount('test-account')).displayName, 'Test Person');
+});
+
+test('credential deletion that takes effect and then fails restores the account credential', async t => {
+  const { store, keyring, secrets } = await fixture(t);
+  await store.saveAccount(account(), 'old-password');
+  keyring.deletePassword = async id => {
+    secrets.delete(id);
+    throw new Error('native private-password deletion transcript');
+  };
+  await assert.rejects(store.removeAccount('test-account'), error => {
+    assert.doesNotMatch(error.message, /private-password|transcript/);
+    return true;
+  });
+  assert.equal(await store.getPassword('test-account'), 'old-password');
+  assert.deepEqual(await store.getAccount('test-account'), account());
+});
+
+test('a pre-cancelled save never accesses the credential store or changes metadata', async t => {
+  const { store, directory } = await fixture(t, {
+    async getPassword() { assert.fail('cancelled save accessed keyring'); },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(store.saveAccount(account(), 'secret', { signal: controller.signal }), { code: 'CONFIG_CANCELLED' });
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('cancellation after credential rotation rolls back before reporting completion', async t => {
+  const { store, keyring, secrets } = await fixture(t);
+  await store.saveAccount(account(), 'old-password');
+  const controller = new AbortController();
+  keyring.setPassword = async (id, password) => {
+    secrets.set(id, password);
+    if (password === 'new-password') controller.abort();
+  };
+  await assert.rejects(store.saveAccount({ ...account(), displayName: 'Should not persist' }, 'new-password', { signal: controller.signal }), { code: 'CONFIG_CANCELLED' });
+  assert.equal(await store.getPassword('test-account'), 'old-password');
+  assert.equal((await store.getAccount('test-account')).displayName, 'Test Person');
+});
+
+test('a failed metadata write removes a new credential and temporary files', async t => {
+  const { directory, store, keyring, secrets } = await fixture(t);
+  const setPassword = keyring.setPassword;
+  keyring.setPassword = async (id, password) => {
+    await setPassword(id, password);
+    // Force the final file replacement to fail after the keyring write.
+    await mkdir(join(directory, 'accounts.json'));
+  };
+  await assert.rejects(store.saveAccount(account(), 'private-password'), /could not be saved/);
+  assert.equal(secrets.size, 0);
+  assert.deepEqual(await readdir(directory), ['accounts.json']);
+});
+
+test('failed credential rollback is reported as recovery required without native error details', async t => {
+  const { store, keyring, secrets } = await fixture(t);
+  await store.saveAccount(account(), 'old-password');
+  keyring.setPassword = async (id, password) => {
+    if (password === 'new-password') secrets.set(id, password);
+    throw new Error('native private-password AUTH transcript');
+  };
+  await assert.rejects(store.saveAccount(account(), 'new-password'), error => {
+    assert.equal(error.code, 'CONFIG_RECOVERY_REQUIRED');
+    assert.match(error.message, /could not be fully restored/);
+    assert.doesNotMatch(error.message, /private-password|AUTH|transcript/);
+    return true;
+  });
+});
+
+test('an existing lock is never automatically treated as stale or removed', async t => {
+  const { directory, store, secrets } = await fixture(t);
+  const sentinel = '{"pid":99999999,"createdAt":"2000-01-01T00:00:00.000Z"}\n';
+  await writeFile(join(directory, '.accounts.lock'), sentinel, { mode: 0o600 });
+  await assert.rejects(store.saveAccount(account(), 'private-password'), { code: 'CONFIG_BUSY' });
+  assert.equal(await readFile(join(directory, '.accounts.lock'), 'utf8'), sentinel);
+  assert.equal(secrets.size, 0);
 });

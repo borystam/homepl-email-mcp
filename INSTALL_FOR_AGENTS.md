@@ -4,6 +4,18 @@ Use this runbook when the user requests installation of this connector. It prepa
 
 Target release: **v0.1.0** from **https://github.com/borystam/homepl-email-mcp**. Read the release's README for capabilities and limits. This release has not yet been tested against a live home.pl mailbox.
 
+## Development-branch additions
+
+The instructions below pin released v0.1.0. The current hardening branch is not
+part of that tag. When explicitly installing a reviewed development commit,
+`serve --read-only` removes all mutation tools, and `config --read-only` generates
+that mode. Verify `mail_accounts.access` and actual tool discovery after reload.
+Use `mail_get_messages` for up to ten exact references; it returns metadata only
+unless bodies are requested. Large results use `completeResultFile` or batch
+`fullResultFile`; inspect the referenced private JSON rather than assuming fields
+were omitted by the server. Generated config retains an explicit
+`HOME_MAIL_DATA_DIR` for desktop clients that do not inherit the shell environment.
+
 ## 1. Establish the local execution environment
 
 Confirm that this agent can execute on the employee's computer and load local **stdio MCP** servers. Ordinary browser-only ChatGPT cannot perform this installation or inherit a local Codex configuration. If no suitable local execution/client exists, explain that concrete requirement and stop instead of claiming success.
