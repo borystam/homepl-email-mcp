@@ -6,6 +6,28 @@ tag and downloadable release assets; v0.1.0 remains an older initial release.
 One authorized home.pl mailbox has passed the live Mac pilot. Full app
 quit/reopen and OS logout/reboot checks remain unverified.
 
+## SMTP outcome and message identity fixes — 2026-10-15
+
+An authorized live Mac check exercised server draft creation and update, draft
+preparation, multipart text/HTML, Unicode and binary attachments, SMTP delivery,
+Sent copies, received-message search, exact raw download, batch metadata reads,
+flags and moving the generated draft to Trash. Two test messages reached the
+intended external inbox. Both downloaded attachments matched their original
+SHA-256 hashes. No unrelated messages were changed.
+
+The live check exposed a result-identity bug: Nodemailer generated a surrogate
+Message-ID for raw sends even though the immutable MIME contained a different
+ID. Sending now reads the integrity-validated MIME headers and supplies, returns
+and persists the actual Message-ID, including for older prepared operations.
+An independent loopback check also found that explicit MAIL FROM rejections
+were incorrectly reported as unknown; they now report a known, sanitized sender
+rejection. Neither fix permits automatic retry.
+
+All 171 synthetic tests passed, with zero skips. The Message-ID regression failed
+before the fix and now checks the exact SMTP bytes, Sent bytes, returned ID and
+persisted outcome. Independent review found no actionable issues. These local
+source fixes are not part of the published v0.3.0 release yet.
+
 ## v0.3.0 conversation-driven local onboarding — 2026-10-15
 
 The affected Windows installation subsequently reported its agent shell running

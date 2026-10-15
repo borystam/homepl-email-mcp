@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import nodemailer from 'nodemailer';
 import { SMTPServer } from 'smtp-server';
+import { simpleParser } from 'mailparser';
 import { createContext } from '../src/context.js';
 import { writeTools } from '../src/write-tools.js';
 
@@ -23,7 +24,11 @@ async function fixture(t, failure) {
       if (failure === 'auth') return callback(Object.assign(new Error(privateReply), { responseCode: 535 }));
       callback(null, { user: 'synthetic' });
     },
-    onMailFrom(_address, _session, callback) { calls.mail++; callback(); },
+    onMailFrom(_address, _session, callback) {
+      calls.mail++;
+      if (failure === 'sender') return callback(Object.assign(new Error(privateReply), { responseCode: 550 }));
+      callback();
+    },
     onRcptTo(_address, _session, callback) { calls.rcpt++; callback(); },
     onData(stream, _session, callback) {
       calls.data++;
@@ -83,6 +88,7 @@ async function fixture(t, failure) {
 
 for (const [failure, expectedError, expectedCalls] of [
   ['auth', { code: 'EAUTH', command: 'AUTH PLAIN', responseCode: 535 }, { auth: 1, mail: 0, rcpt: 0, data: 0, imap: 0 }],
+  ['sender', { code: 'EENVELOPE', command: 'MAIL FROM', responseCode: 550 }, { auth: 1, mail: 1, rcpt: 0, data: 0, imap: 0 }],
   ['data', { code: 'EMESSAGE', command: 'DATA', responseCode: 550 }, { auth: 1, mail: 1, rcpt: 1, data: 1, imap: 0 }],
 ]) {
   test(`explicit SMTP ${failure} rejection is known, private, persisted and never resent`, { timeout: 10000 }, async t => {
@@ -122,3 +128,62 @@ for (const failure of ['disconnect', 'timeout']) {
     assert.equal(f.calls.imap, 0);
   });
 }
+
+test('accepted SMTP result and persisted outcome identify the immutable wire and Sent MIME', { timeout: 10000 }, async t => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'homepl-smtp-message-id-'));
+  const wire = [], sent = [];
+  const smtp = new SMTPServer({
+    secure: false, logger: false, disabledCommands: ['STARTTLS'],
+    allowInsecureAuth: true,
+    onAuth(_auth, _session, callback) { callback(null, { user: 'synthetic' }); },
+    onData(stream, _session, callback) {
+      const chunks = [];
+      stream.on('data', chunk => chunks.push(chunk));
+      stream.on('end', () => { wire.push(Buffer.concat(chunks)); callback(); });
+    },
+  });
+  t.after(async () => {
+    await new Promise(resolve => smtp.server.listening ? smtp.close(resolve) : resolve());
+    await rm(dataDir, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    smtp.server.once('error', reject);
+    smtp.listen(0, '127.0.0.1', resolve);
+  });
+  const ctx = await createContext({
+    dataDir,
+    getAccount: async () => ({ email: 'sender@example.invalid', imap: { host: 'fixture.invalid', port: 993 }, smtp: { host: 'fixture.invalid', port: 465 }, folders: { sent: 'Sent' } }),
+    getPassword: async () => 'synthetic-password',
+    smtpFactory: settings => nodemailer.createTransport({
+      ...settings, host: '127.0.0.1', port: smtp.server.address().port,
+      secure: false, ignoreTLS: true,
+    }),
+    imapFactory: () => ({
+      connect: async () => {}, logout: async () => {}, close() {},
+      append: async (folder, raw) => {
+        assert.equal(folder, 'Sent');
+        sent.push(raw);
+        return { uid: 1, uidValidity: 1n };
+      },
+    }),
+  });
+  const tools = Object.fromEntries(writeTools(ctx).map(tool => [tool.name, args => tool.handler(tool.schema.parse(args))]));
+  const prepared = await tools.mail_prepare({ accountId: 'synthetic', to: ['recipient@example.invalid'], subject: 'Synthetic identity', text: 'Synthetic message' });
+  const reference = { accountId: 'synthetic', operationId: prepared.operationId };
+  const raw = await readFile(prepared.emlPath);
+  const expected = (await simpleParser(raw)).messageId;
+  const stateBefore = await tools.mail_outbox_status(reference);
+  assert.equal(Object.hasOwn(stateBefore, 'messageId'), false, 'existing prepared operations have no separately stored Message-ID');
+  const result = await tools.mail_send_prepared(reference);
+  assert.equal(result.smtpAccepted, true);
+  assert.equal(wire.length, 1);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(wire[0], raw, 'SMTP transmits the prepared bytes unchanged');
+  assert.deepEqual(sent[0], await readFile(prepared.sentEmlPath));
+  assert.equal((await simpleParser(wire[0])).messageId, expected);
+  assert.equal((await simpleParser(sent[0])).messageId, expected);
+  assert.equal(result.messageId, expected);
+  const stateAfter = await tools.mail_outbox_status(reference);
+  assert.equal(stateAfter.outcome.messageId, expected);
+  assert.equal(result.sentCopy.saved, true);
+});
