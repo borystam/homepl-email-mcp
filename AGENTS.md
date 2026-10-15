@@ -1,6 +1,6 @@
 # Working on homepl-email-mcp
 
-For employee onboarding, read INSTALL_FOR_AGENTS.md. Node.js >=22 is required.
+For employee onboarding, read INSTALL_FOR_AGENTS.md. Native Node.js 22.19+ (22.x) or 24.6+ is required.
 
 For development, run `npm ci --ignore-scripts` then `npm test`. The suite uses
 loopback mail servers and synthetic messages; it must never access real mailboxes.

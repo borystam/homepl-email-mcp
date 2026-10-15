@@ -1,10 +1,42 @@
 # Release and validation status
 
-Version: **v0.2.0**. The installation runbook and employee prompt pin this version
+Version: **v0.2.1**. The installation runbook and employee prompt pin this version
 and include the hardening described below. See GitHub Releases for the published
 tag and downloadable release assets; v0.1.0 remains an older initial release.
 One authorized home.pl mailbox has passed the live Mac pilot. Full app
 quit/reopen and OS logout/reboot checks remain unverified.
+
+## v0.2.1 OS certificate trust and agent-owned installation — 2026-10-15
+
+An employee Windows installation reported TLS interception by a locally trusted
+mail-scanning certificate. Setup and runtime IMAP/SMTP now share a strict TLS
+configuration that adds OS-trusted roots to Node's existing default/additional
+roots. No certificate export, antivirus change, global trust mutation or disabled
+verification is required. Native Node 22.19+ on 22.x or 24.6+ is required.
+
+A subsequent save failure had only a generic storage message; its exact cause on
+that PC is not yet established. Setup now probes its real data directory and a
+unique synthetic keyring entry before opening the password form. Fixed storage
+codes distinguish binding, read, write, metadata and cleanup failures without
+revealing raw errors. There is no plaintext credential fallback.
+
+The installing agent's runbook explicitly owns prerequisite installation,
+preflight, ordinary local repair, saved-login reuse, MCP client registration and
+real-tool verification. The employee enters mailbox details privately; diagnostics
+are performed by the agent. Actual security/organization blocks remain blocks.
+
+Synthetic tests cover combined CA sources and all four mail transport paths,
+untrusted/hostname rejection, pre-form storage order, safe storage-stage messages,
+and cleanup/rollback. Windows CI additionally installs and removes one unique
+synthetic machine-store root on an ephemeral runner, proving fresh-process native trust and rejection
+after removal; no user machine trust store is modified by that smoke script.
+The independent patch reviewer found one doctor binding-message gap, which was
+fixed, and no remaining blocking issues. The local full suite passed 153 tests
+with zero skips. Native platform results are available in GitHub Actions for the
+release commit. Minimum-version Windows CI exposed an upstream libuv filesystem
+identity inconsistency on Node 22.15; the runtime floor is now 22.19/24.6, which
+contains its fix. Strong file-identity checks are retained. The affected employee PC still needs an agent
+upgrade and a successful storage/MCP verification before it is called working.
 
 ## v0.2.0 publication readiness — 2026-10-15
 
@@ -206,3 +238,30 @@ calls confirm read-only access, folder listing, an old message and its attachmen
 No SMTP send or mailbox mutation was part of that pilot. The next independent
 council was due after another 30 minutes of active work (approximately 00:41
 Warsaw time); the subsequent council is recorded above.
+
+## Independent dependency security review — 2026-10-15
+
+Scope: package manifests/lockfile, installed package lifecycle metadata, install
+instructions and CI dependency acquisition. All six production and two development
+direct dependencies are exact versions. All 157 non-root lock entries have exact
+versions, HTTPS npm-registry tarball URLs and integrity hashes; none declares an
+install hook. Native credential-store packages are pinned to 2.1.1 and remain
+optional platform dependencies. CI actions use full commit SHAs and read-only
+repository permissions. No dependency versions were changed in this review.
+
+`npm audit --json --ignore-scripts` reported zero known advisories. `npm audit
+signatures --ignore-scripts` verified registry signatures for 146 installed
+packages and attestations for 29. These are registry checks, not a source-code or
+native-binary audit, and cannot guarantee absence of malicious code or future
+vulnerabilities. Runtime dependency code still executes when the connector uses it.
+
+Added project `.npmrc` defaults `ignore-scripts=true` and `save-exact=true`;
+explicit install commands retain `--ignore-scripts`. npm documents that
+[`npm ci`](https://docs.npmjs.com/cli/v11/commands/npm-ci/) freezes the locked tree
+and that ignoring install scripts still permits explicitly requested scripts such
+as `npm test`. Higher-precedence npm settings can override project defaults.
+
+Release-tag-only installation remains weaker than comparing the checkout with an
+independently supplied full commit. Record the final release commit in its release
+notes/setup handoff and verify it when provided. A pin prevents silently adopting
+a later changed package/tag; it does not make the original code inherently safe.

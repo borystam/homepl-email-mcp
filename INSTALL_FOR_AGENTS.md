@@ -2,11 +2,27 @@
 
 Use this runbook when the user requests installation of this connector. It prepares a local mailbox connection for that user's agent; it does not authorize sending mail, deleting content, or accessing unrelated accounts. The user's installation request authorizes the necessary download, local dependency installation, client configuration and stated read verification. Do not insert an additional approval gate for those steps.
 
-Target release: **v0.2.0** from **https://github.com/borystam/homepl-email-mcp**. Read that exact release's README for capabilities and limits. One authorized live Mac pilot verified IMAP/SMTP, Keychain, actual MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. Native desktop MCP calls also succeeded. A full app quit/reopen and OS logout/reboot remain unverified; perform the checks below on the employee's installation.
+Target release: **v0.2.1** from **https://github.com/borystam/homepl-email-mcp**. Read that exact release's README for capabilities and limits. One authorized live Mac pilot verified IMAP/SMTP, Keychain, actual MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. Native desktop MCP calls also succeeded. A full app quit/reopen and OS logout/reboot remain unverified; perform the checks below on the employee's installation.
 
-## v0.2.0 modes and result handling
+## Installation means completing the local integration
 
-The instructions below pin v0.2.0. `serve --read-only` removes all mutation tools,
+The installing agent owns the whole attempt: inspect the computer, install any
+missing permitted prerequisites, download the pinned source, install its locked
+dependencies, repair ordinary local setup problems, register the MCP in the
+actual client, and verify it through real tools. Run diagnostics yourself; do not
+turn them into a checklist of shell commands for the employee. The employee's
+ordinary task is entering their mailbox details in the private local form.
+Reuse a working saved account instead of requesting another login.
+
+The install request authorizes these necessary local steps. Only stop for an
+actual OS consent prompt, an explicit organization/client policy, missing private
+mailbox details, or an action outside installation scope. Do not silently bypass
+policy, disable security software, run as Administrator, weaken TLS, or save
+passwords in files to claim success. Explain a genuine block precisely.
+
+## v0.2.1 modes and result handling
+
+The instructions below pin v0.2.1. `serve --read-only` removes all mutation tools,
 and `config --read-only` generates that mode. Verify `mail_accounts.access` and
 actual tool discovery after reload.
 Use `mail_get_messages` for up to ten exact references; it returns metadata only
@@ -19,7 +35,7 @@ were omitted by the server. Generated config retains an explicit
 
 Confirm that this agent can execute on the employee's computer and load local **stdio MCP** servers. Ordinary browser-only ChatGPT cannot perform this installation or inherit a local Codex configuration. If no suitable local execution/client exists, explain that concrete requirement and stop instead of claiming success.
 
-Support Windows and macOS (Apple silicon or Intel), using native Node.js 22+ and
+Support Windows and macOS (Apple silicon or Intel), using native Node.js 22.19+ (22.x) or 24.6+ and
 the employee's normal desktop account. On Windows, do not silently switch to WSL:
 it has a different credential store and filesystem. On Mac, use native Node and
 do not run setup or the MCP with `sudo`. Linux also works with a persistent,
@@ -34,7 +50,7 @@ Choose a persistent per-user directory. On Windows, the suggested directory is `
 ```powershell
 $homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
 New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
+git clone --branch v0.2.1 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
 Set-Location $homeplRepo
 npm.cmd ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -47,7 +63,7 @@ On macOS, use Terminal:
 ```sh
 homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
 mkdir -p "$(dirname "$homeplRepo")"
-git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
+git clone --branch v0.2.1 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
 cd "$homeplRepo"
 npm ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -59,6 +75,61 @@ persistent directory under the user's home and the same Git/npm commands.
 The credential-store dependency ships platform binaries; `doctor` checks whether
 the native binding loads, not whether a saved password can be retrieved. A failed
 platform binding is a setup failure, not a reason to store passwords in text files.
+
+## 2a. Agent-owned preflight and recovery
+
+Before asking for a mailbox password, run `node src/cli.js doctor --storage`
+and `node scripts/keyring-smoke.js` yourself, from the same native Node/user
+context intended for setup and the MCP. The first checks the actual data directory
+and temporary credential read/write/delete; the second checks a synthetic saved
+credential across fresh processes. Both remove their test data and do not read
+mailbox passwords. Setup also performs the first check automatically before
+opening the form. Check exit codes; a loaded native binding alone is insufficient.
+
+Use a supported native Node LTS version: 22.19+ on 22.x, or 24.6+. Node 23 is not
+supported. Upgrade through the machine's permitted normal software channel when
+necessary, then update the client's absolute Node path as well as the shell.
+Install the current patched LTS, rather than choosing an old release just because
+it meets the compatibility minimum. Earlier Windows runtimes have an upstream
+[filesystem identity inconsistency](https://github.com/libuv/libuv/commit/82cdfb75f)
+that correctly trips this connector's attachment/outbox checks.
+
+All IMAP/SMTP connections automatically merge Node's default/additional roots
+with OS-trusted roots. An already Windows-trusted G DATA/company inspection root
+therefore needs no manual certificate export or environment toggle. Keep
+certificate and hostname checks enabled. Do not change the computer's trust
+store or antivirus settings as an installation workaround. Restart the connector
+after administrator-approved OS certificate changes.
+
+If HTTPS package downloads are also inspected, npm runs before this connector's
+TLS helper. Run the necessary npm command with process-local
+`NODE_USE_SYSTEM_CA=1` on the supported Node version so it uses the same OS trust.
+Restore the shell's previous value afterward; do not change global environment
+or npm `strict-ssl` settings. This flag contains no credential.
+
+When a preflight/save error occurs, read only its fixed code and act on the
+specific failure. Complete the repair and rerun preflight yourself:
+
+| Safe code | Agent action |
+| --- | --- |
+| `NODE_UNSUPPORTED` / `TLS_CA_UNSUPPORTED` | Install a supported native Node version and use that executable for setup and MCP registration. |
+| `CONFIG_CREDENTIAL_BINDING_FAILED` | Check Node/OS architecture and the pinned checkout; rerun `npm ci --omit=dev --ignore-scripts` including optional platform packages. Do not globally change npm policy. |
+| `CONFIG_DIRECTORY_UNWRITABLE` / `CONFIG_SETTINGS_WRITE_FAILED` | Check the selected data path and current user's write permissions. Use the normal per-user default for a fresh install. Preserve existing data and any deliberate override; do not delete accounts or change broad ACL/security policies. |
+| `CONFIG_CREDENTIAL_READ_FAILED` / `CONFIG_CREDENTIAL_WRITE_FAILED` / `CONFIG_CREDENTIAL_DELETE_FAILED` | Check that setup and MCP run as the employee's normal interactive desktop user, not another account, service or restricted agent credential context. Retry through the client's normal permitted host execution mode. Keep that same context for MCP launch and repeat both storage checks. Respect a genuine policy block; do not ask the employee to inspect or dump Credential Manager/Keychain. |
+| `CONFIG_SETTINGS_READ_FAILED` | Inspect only metadata structure/permissions locally; preserve the existing file. Repair a verified cause, not by resetting the mailbox or erasing data. |
+| `CONFIG_BUSY` | Identify the active connector setup and wait or close a setup you started. Never steal an active lock. After a crash, verify all setup processes have exited before removing only the stale `.accounts.lock`. |
+| `CONFIG_RECOVERY_REQUIRED` / `CONFIG_STORAGE_CLEANUP_FAILED` / `CONFIG_LOCK_RELEASE_FAILED` | Inspect account/test cleanup state without exposing credentials. Restore access and rerun the safe check; do not repeatedly overwrite accounts or claim completion while recovery is uncertain. |
+
+If a clean checkout already exists, deliberately update it to the pinned release
+without discarding local changes. Keep the same data directory, OS user and
+credential service. An upgrade does not require removing or reentering a saved
+mailbox credential. If a native store remains genuinely unavailable, report that
+specific block; no plaintext fallback is implemented.
+
+If the user provides a full expected release commit, compare it to
+`git rev-parse HEAD` before installing dependencies or running source. A release
+tag alone can move. Reject a mismatch and report it; do not fall back to `main`.
+Use the full tested commit printed in the release notes for reproducible handoffs.
 
 ## 3. Guide the user through private login
 

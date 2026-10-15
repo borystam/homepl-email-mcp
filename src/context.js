@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
 import * as config from './config.js';
+import { getMailTlsOptions } from './tls.js';
 
 export class MailError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -38,7 +39,7 @@ export async function createContext(options = {}) {
       auth: { user: account.email, pass: password },
       logger: false, logRaw: false, disableAutoIdle: true,
       connectionTimeout: 20000, greetingTimeout: 15000, socketTimeout: 120000,
-      tls: { rejectUnauthorized: true },
+      tls: getMailTlsOptions(),
     });
     // Prevent background socket errors from terminating the stdio process.
     client.on?.('error', () => {});
@@ -64,7 +65,7 @@ export async function createContext(options = {}) {
     const transport = smtpFactory({
       host: account.smtp.host, port: account.smtp.port, secure: true,
       auth: { user: account.email, pass: password },
-      tls: { rejectUnauthorized: true },
+      tls: getMailTlsOptions(),
       connectionTimeout: 20000, greetingTimeout: 15000, socketTimeout: 120000,
       logger: false, debug: false, forceAuth: true, disableFileAccess: true, disableUrlAccess: true,
     });
