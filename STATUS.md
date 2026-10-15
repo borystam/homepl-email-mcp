@@ -4,6 +4,41 @@ Released version: v0.1.0. The current `codex/connector-hardening` work is an
 unreleased improvement set; installation pinned to v0.1.0 does not receive it.
 No real home.pl mailbox has been accessed or verified.
 
+## Live setup diagnostics — 2026-10-15
+
+The first browser retry reached provider authentication and reported `IMAP_AUTH`.
+The same credentials were also rejected by the provider's own login page. TLS
+connectivity and the external-client setting were checked. No mailbox connection
+has been saved, and no messages have been read or changed. Password correction or
+an explicitly authorized reset is needed before continuing the live pilot.
+
+Setup now distinguishes fixed IMAP/SMTP authentication, network, TLS and unknown
+failure codes, plus IMAP folder discovery. Provider error text, responses, stacks
+and arbitrary codes remain hidden. Transport factories permit isolated regression
+checks while preserving production TLS validation and request protections.
+Validation: 133 local automated tests passed, zero skipped; focused setup/TLS
+checks passed 31 tests. Native browser verification is a separate check.
+
+## Independent council — 2026-10-15 11:03 Europe/Warsaw
+
+Three fresh-context advisors independently inspected the actual setup source,
+installation and validation status: pragmatic product owner, skeptical reliability
+engineer, and first-time operator. All found that the live connection, rather
+than more features or broad audits, is the next required delivery outcome.
+
+Accepted: apply the narrow diagnostic patch to the installed copy, restart setup,
+make one informative attempt, preserve non-secret settings, and stop unchanged
+password retries. The next attempt identified `IMAP_AUTH`; the provider's login
+page independently confirmed rejected credentials. Accepted: after login succeeds,
+verify real MCP folders/metadata and saved credentials from a fresh client process.
+No conflicting advice required rejection. Password entry through the local form
+remains the normal employee flow; the pilot user explicitly authorized direct
+browser login assistance in this session.
+
+Next testable outcome: valid mailbox credentials produce a saved connection and
+an actual MCP folder listing. Further features, audits and repeated full-suite
+runs are deferred. The next council is due after another 30 minutes of active work.
+
 ## Current result
 
 Fixed a live-onboarding browser failure on 2026-10-15: the setup response used

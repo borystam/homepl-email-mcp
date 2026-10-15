@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createConfigStore } from '../src/config.js';
-import { startSetup } from '../src/setup.js';
+import { startSetup, verifyAccount } from '../src/setup.js';
 
 function request(url, { method = 'GET', headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
@@ -98,6 +98,86 @@ test('failed authentication never saves or exposes raw protocol error and permit
   assert.equal(calls.length, 0);
   assert.equal((await submit()).status, 200);
   assert.equal(calls.length, 1);
+});
+
+test('verification diagnostics identify the failing protocol and stage without exposing provider data', async t => {
+  const cases = [
+    ['imap', { authenticationFailed: true }, 'IMAP_AUTH'],
+    ['imap', { code: 'ENOTFOUND' }, 'IMAP_NETWORK'],
+    ['imap', { code: 'CONNECT_TIMEOUT' }, 'IMAP_NETWORK'],
+    ['imap', { code: 'CERT_HAS_EXPIRED' }, 'IMAP_TLS'],
+    ['imap', { tlsFailed: true }, 'IMAP_TLS'],
+    ['imap', { code: 'PRIVATE_PROVIDER_CODE' }, 'IMAP_UNKNOWN'],
+    ['folders', { code: 'ECONNRESET' }, 'IMAP_FOLDERS'],
+    ['smtp', { code: 'EAUTH' }, 'SMTP_AUTH'],
+    ['smtp', { code: 'ETIMEDOUT' }, 'SMTP_NETWORK'],
+    ['smtp', { code: 'ETLS' }, 'SMTP_TLS'],
+    ['smtp', { code: 'ESOCKET', originalCode: 'DEPTH_ZERO_SELF_SIGNED_CERT' }, 'SMTP_TLS'],
+    ['smtp', { code: 'PRIVATE_PROVIDER_CODE' }, 'SMTP_UNKNOWN'],
+  ];
+  for (const [stage, properties, expected] of cases) await t.test(`${expected}: ${JSON.stringify(properties)}`, async t => {
+    const operations = [];
+    let failing = true;
+    const providerError = Object.assign(new Error('PRIVATE_PROVIDER_TEXT private-mailbox-password private@example.invalid'), {
+      response: 'PRIVATE_PROVIDER_RESPONSE', stack: 'PRIVATE_PROVIDER_STACK', ...properties,
+    });
+    const checkSettings = (settings, port) => {
+      assert.equal(settings.port, port);
+      assert.equal(settings.secure, true);
+      assert.deepEqual(settings.tls, { rejectUnauthorized: true, minVersion: 'TLSv1.2' });
+      assert.equal(settings.logger, false);
+    };
+    const transports = {
+      imapFactory(settings) {
+        checkSettings(settings, 993);
+        assert.equal(settings.emitLogs, false);
+        return {
+          on() {},
+          async connect() { operations.push('imap-connect'); if (failing && stage === 'imap') throw providerError; },
+          async list() { operations.push('imap-list'); if (failing && stage === 'folders') throw providerError; return [{ specialUse: '\\Sent', path: 'Sent' }]; },
+          close() { operations.push('imap-close'); },
+        };
+      },
+      smtpFactory(settings) {
+        checkSettings(settings, 465);
+        assert.equal(settings.forceAuth, true);
+        assert.equal(settings.debug, false);
+        return {
+          async verify() { operations.push('smtp-verify'); if (failing && stage === 'smtp') throw providerError; },
+          close() { operations.push('smtp-close'); },
+        };
+      },
+    };
+    const { submit, calls } = await fixture(t, { verify: (account, password) => verifyAccount(account, password, transports) });
+    const result = await submit();
+    assert.equal(result.status, 400);
+    assert.ok(result.text.includes(`[${expected}]`));
+    assert.doesNotMatch(result.text, /PRIVATE_PROVIDER|private-mailbox-password|private@example\.invalid/);
+    assert.deepEqual(calls, [], 'a verification failure cannot save an account');
+    assert.deepEqual(operations, stage === 'imap' ? ['imap-connect', 'imap-close']
+      : stage === 'folders' ? ['imap-connect', 'imap-list', 'imap-close']
+        : ['imap-connect', 'imap-list', 'imap-close', 'smtp-verify', 'smtp-close']);
+    failing = false;
+    assert.equal((await submit()).status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].operation, 'save');
+    assert.equal(calls[0].account.folders.sent, 'Sent');
+  });
+});
+
+test('setup only renders allowlisted diagnostic text and retains the generic fallback', async t => {
+  let code;
+  const { submit, calls } = await fixture(t, {
+    verify: async () => { throw Object.assign(new Error('PRIVATE_PROVIDER_TEXT private-mailbox-password'), { code, response: 'PRIVATE_PROVIDER_RESPONSE', stack: 'PRIVATE_PROVIDER_STACK' }); },
+  });
+  for (code of [undefined, 'PRIVATE_PROVIDER_CODE', 'toString', '__proto__', 'IMAP_AUTH']) {
+    const result = await submit();
+    assert.equal(result.status, 400);
+    assert.doesNotMatch(result.text, /PRIVATE_PROVIDER|private-mailbox-password/);
+    if (code === 'IMAP_AUTH') assert.match(result.text, /\[IMAP_AUTH\] IMAP sign-in was rejected/);
+    else assert.match(result.text, /Connection could not be verified/);
+  }
+  assert.deepEqual(calls, []);
 });
 
 test('save errors are scrubbed and same mailbox reuses its existing identity', async t => {
