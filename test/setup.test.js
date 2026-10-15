@@ -39,14 +39,14 @@ async function fixture(t, options = {}) {
   return { setup, calls, get, token, submit };
 }
 
-test('local browser flow verifies both protocols before saving, detects folders and closes after success', async t => {
+test('local HTTP flow verifies both protocols before saving, detects folders and closes after success', async t => {
   const { setup, calls, get, submit } = await fixture(t);
   assert.equal(new URL(setup.url).hostname, '127.0.0.1');
   assert.equal(get.status, 200);
   assert.match(get.headers['content-security-policy'], /default-src 'none'/);
   assert.match(get.headers['content-security-policy'], /frame-ancestors 'none'/);
   assert.equal(get.headers['cache-control'], 'no-store');
-  assert.equal(get.headers['referrer-policy'], 'no-referrer');
+  assert.equal(get.headers['referrer-policy'], 'same-origin');
   assert.equal(get.headers['access-control-allow-origin'], undefined);
   const result = await submit({ trash: 'Kosz' });
   assert.equal(result.status, 200);
@@ -65,11 +65,18 @@ test('local browser flow verifies both protocols before saving, detects folders 
 });
 
 test('setup rejects cross-origin posts, missing origin/token, guessed routes, and DNS-rebinding Host', async t => {
-  const { setup, calls, submit } = await fixture(t);
+  const { setup, calls, submit, token } = await fixture(t);
   assert.equal((await submit({}, { headers: { origin: 'https://attacker.example' } })).status, 403);
   assert.equal((await submit({}, { headers: { origin: '' } })).status, 403);
+  assert.equal((await submit({}, { headers: { origin: 'null', 'sec-fetch-site': 'same-origin' } })).status, 403);
+  assert.equal((await request(setup.url, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token, email: 'person@example.pl', password: 'private-mailbox-password', imapHost: 'serwer123456.home.pl' }).toString(),
+  })).status, 403);
   assert.equal((await submit({ token: '' })).status, 403);
   assert.equal((await submit({}, { headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
+  assert.equal((await submit({}, { headers: { 'sec-fetch-site': 'same-site' } })).status, 403);
+  assert.equal((await submit({}, { headers: { 'sec-fetch-site': 'none' } })).status, 403);
   assert.equal((await request(setup.url, { headers: { host: 'attacker.example' } })).status, 403);
   assert.equal((await request(new URL('/setup/guessed', setup.url))).status, 404);
   assert.equal((await request(`${setup.url}?password=anything`)).status, 404);

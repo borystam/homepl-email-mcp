@@ -120,7 +120,9 @@ export async function startSetup(options = {}) {
     response.writeHead(status, {
       'Content-Type': plain ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8',
       'Content-Security-Policy': `default-src 'none'; style-src 'nonce-${nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
-      'Cache-Control': 'no-store', 'Pragma': 'no-cache', 'Referrer-Policy': 'no-referrer',
+      // Native form POSTs under no-referrer send Origin: null. Keep the real
+      // same-origin Origin for CSRF checks, without leaking referrers off-site.
+      'Cache-Control': 'no-store', 'Pragma': 'no-cache', 'Referrer-Policy': 'same-origin',
       'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
       'Cross-Origin-Opener-Policy': 'same-origin', 'Connection': 'close',
     });

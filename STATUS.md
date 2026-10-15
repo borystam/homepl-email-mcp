@@ -6,6 +6,17 @@ No real home.pl mailbox has been accessed or verified.
 
 ## Current result
 
+Fixed a live-onboarding browser failure on 2026-10-15: the setup response used
+`Referrer-Policy: no-referrer`, which makes a native form POST send `Origin: null`.
+The strict Origin check then returned 403 before attempting mailbox login.
+`same-origin` preserves the required Origin and keeps referrers off other origins;
+Host, loopback, Origin, Fetch Metadata and CSRF-token checks remain unchanged.
+Chrome reproduced the old null Origin, and submitting the corrected actual setup
+form with synthetic verify/save callbacks completed once successfully. No real
+mailbox or Keychain was accessed in that browser check. HTTP regressions retain
+rejection of null/missing Origin and non-same-origin Fetch Metadata. The existing
+HTTP tests have been renamed accurately; they do not simulate a native browser.
+
 Added an optional read-only MCP process, bounded batch metadata reads, and server
 reply/reply-all/forward drafts. Fixed confirmed failures in dates, UIDNEXT,
 duplicate FETCH updates, decoded preview budgets, oversized output, stream cleanup,
