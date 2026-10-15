@@ -255,11 +255,15 @@ async function send(ctx, args) {
     const raw = await regularRead(path.join(dir, 'message.eml'));
     const sentRaw = await regularRead(path.join(dir, 'sent.eml'));
     if (digest(raw) !== current.sha256 || digest(sentRaw) !== current.sentSha256 || !stripBccHeader(sentRaw).equals(raw)) throw writeError('OUTBOX_INTEGRITY_FAILED');
+    // Nodemailer otherwise generates an unrelated result ID for raw sends.
+    // Read only the immutable MIME headers, including for older prepared state.
+    const { messageId } = await simpleParser(raw.subarray(0, raw.indexOf('\r\n\r\n') + 4));
+    if (typeof messageId !== 'string' || !/^<[^<>\s]+>$/.test(messageId)) throw writeError('OUTBOX_INTEGRITY_FAILED');
     current.status = 'sending'; current.attemptedAt = new Date().toISOString();
     await durableWrite(path.join(dir, 'state.json'), json(current));
     let info;
     try {
-      info = await ctx.withSmtp(args.accountId, transport => transport.sendMail({ envelope: current.envelope, raw }));
+      info = await ctx.withSmtp(args.accountId, transport => transport.sendMail({ envelope: current.envelope, raw, messageId }));
     } catch (error) {
       // Only explicit negative replies at recognized SMTP stages establish
       // rejection. Socket loss and timeouts can follow acceptance and stay
@@ -269,6 +273,8 @@ async function send(ctx, args) {
       let rejectionReason;
       if (negativeReply && error.code === 'EAUTH' && /^AUTH(?: [A-Z0-9_-]+)?$/.test(error.command || '')) {
         rejectionReason = 'SMTP rejected authentication before transmitting the message. Check account credentials before preparing a new message; this operation cannot be retried.';
+      } else if (negativeReply && error.code === 'EENVELOPE' && error.command === 'MAIL FROM') {
+        rejectionReason = 'SMTP rejected the sender before transmitting the message. Check the sender address and account sending permissions before preparing a new message; this operation cannot be retried.';
       } else if (negativeReply && error.code === 'EMESSAGE' && error.command === 'DATA') {
         rejectionReason = 'SMTP explicitly rejected the message. Check the message and account limits before preparing a new message; this operation cannot be retried.';
       } else if (negativeReply && error.code === 'EENVELOPE' && error.command === 'RCPT TO' && current.envelope.to.length && current.envelope.to.every(v => rejected.has(v.toLowerCase()))) {
@@ -285,7 +291,7 @@ async function send(ctx, args) {
       return { operationId: args.operationId, status: 'unknown', smtpAccepted: null, retryAllowed: false, reason: 'SMTP did not provide a reliable final outcome. Check Sent and recipients before preparing any replacement.' };
     }
     current.status = 'accepted';
-    current.outcome = { smtpAccepted: true, accepted: (info.accepted || []).map(String), rejected: (info.rejected || []).map(String), messageId: info.messageId || null, sentCopy: null };
+    current.outcome = { smtpAccepted: true, accepted: (info.accepted || []).map(String), rejected: (info.rejected || []).map(String), messageId, sentCopy: null };
     let stateSaved = true;
     await durableWrite(path.join(dir, 'state.json'), json(current)).catch(() => { stateSaved = false; });
     try { current.outcome.sentCopy = { saved: true, ...await saveSent(ctx, current, sentRaw) }; }

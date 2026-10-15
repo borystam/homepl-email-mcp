@@ -57,9 +57,13 @@ for (const readOnly of [false, true]) test(`native MCP connects via private form
   assert.equal(tools.length, readOnly ? 10 : 20);
   assert.equal(tools.find(tool => tool.name === 'mail_setup').annotations.readOnlyHint, false);
   assert.equal(tools.some(tool => tool.name === 'mail_send_prepared'), !readOnly);
-  assert.equal((await f.call('mail_setup_status')).status, 'idle');
+  const connectorVersion = f.client.getServerVersion().version;
+  const idle = await f.call('mail_setup_status');
+  assert.equal(idle.status, 'idle');
+  assert.equal(idle.connectorVersion, connectorVersion);
   const started = await f.call('mail_setup');
   assert.equal(started.status, 'pending');
+  assert.equal(started.connectorVersion, connectorVersion);
   assert.equal(started.execution.username, 'Employee');
   assert.equal((await f.call('mail_setup')).url, started.url);
   assert.deepEqual(f.counts(), { starts: 1, verified: 0 });
@@ -75,6 +79,7 @@ for (const readOnly of [false, true]) test(`native MCP connects via private form
   assert.doesNotMatch(await response.text(), new RegExp(password));
   const finished = await f.call('mail_setup_status');
   assert.equal(finished.status, 'connected');
+  assert.equal(finished.connectorVersion, connectorVersion);
   assert.equal(finished.url, undefined);
   assert.equal(f.credentials.size, 1, 'storage probe removed its synthetic item; only the submitted credential remains');
   assert.equal((await f.call('mail_accounts')).accounts[0].id, finished.accountId);

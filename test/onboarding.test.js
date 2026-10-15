@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { createOnboarding, onboardingErrorDescriptions } from '../src/onboarding.js';
 import { configErrorDescriptions } from '../src/config.js';
 
+const { version: connectorVersion } = createRequire(import.meta.url)('../package.json');
 const execution = { platform: 'win32', username: 'Employee', node: 'v24.19.0', dataDir: 'C:\\Users\\Employee\\AppData\\Local\\homepl-email-mcp' };
 const getIdentity = () => ({ ...execution });
 const url = 'http://127.0.0.1:54321/setup/synthetic-private-capability';
@@ -35,7 +37,7 @@ test('an ordinary username still has to pass the real storage preflight and nati
   } });
   const result = await manager.start();
   assert.equal(attempts, 1);
-  assert.deepEqual(result, { status: 'blocked', error: 'CONFIG_CREDENTIAL_WRITE_FAILED', message: configErrorDescriptions.CONFIG_CREDENTIAL_WRITE_FAILED, execution });
+  assert.deepEqual(result, { status: 'blocked', error: 'CONFIG_CREDENTIAL_WRITE_FAILED', message: configErrorDescriptions.CONFIG_CREDENTIAL_WRITE_FAILED, execution, connectorVersion });
   assert.doesNotMatch(JSON.stringify(manager.status()), /secret-password|no such logon|transcript/);
   await manager.start();
   assert.equal(attempts, 2, 'failed preflight may be retried after the launch context is repaired');

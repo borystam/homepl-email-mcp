@@ -1,6 +1,6 @@
 {
   "name": "homepl-email-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local email access for AI assistants via IMAP and SMTP, with guided setup for home.pl",
   "type": "module",
   "private": true,
