@@ -1,10 +1,62 @@
 # Release and validation status
 
-Version: **v0.2.1**. The installation runbook and employee prompt pin this version
+Version: **v0.3.0**. The installation runbook and employee prompt pin this version
 and include the hardening described below. See GitHub Releases for the published
 tag and downloadable release assets; v0.1.0 remains an older initial release.
 One authorized home.pl mailbox has passed the live Mac pilot. Full app
 quit/reopen and OS logout/reboot checks remain unverified.
+
+## v0.3.0 conversation-driven local onboarding — 2026-10-15
+
+The affected Windows installation subsequently reported its agent shell running
+as `CodexSandboxOnline`, with Windows reporting no such credential logon session.
+The previous shell-first runbook therefore tested the wrong execution context.
+Native-store CI passing under a normal runner user did not prove employee
+onboarding under that Codex configuration.
+
+Register/reload now precedes login. `mail_setup` starts the existing private form
+inside the actual MCP process and probes storage there; `mail_setup_status`
+reports actual username, platform, runtime, data path and completion. Known
+Windows sandbox account names are rejected before touching storage or asking for
+credentials. A normal username still must pass the real storage probe. If the
+client itself launches MCP under an unusable identity, this remains a client
+launch block; a reload is not proof of recovery.
+
+The password remains in the private loopback form and OS keyring, never MCP
+arguments, results or chat. One active wizard is reused; terminal status retires
+its URL, and transport closure/stdio EOF cancels the listener. Both mailbox access
+modes retain local onboarding, accurately annotated as a local account change;
+mailbox read-only mode still excludes mailbox writes. Catalog counts are 20/10.
+
+All 169 local synthetic tests passed, zero skipped. A real MCP/private-HTTP-form
+test in each access mode saves a synthetic credential, returns connected, lists
+folders and verifies secret filtering. Boundary tests cover unexpected arguments,
+blocked sandbox identity, concurrent startup and disconnection, including EOF of
+a spawned Node stdio server without a client force-kill. Native platform checks
+remain in GitHub Actions; the affected Windows desktop app still needs its own
+successful identity/storage, live folder and quit/reopen verification.
+
+A later v0.2.1 main-merge CI run hit an isolated five-second OpenSSL startup
+deadline before TLS/authentication; its identical PR tree had passed. The fixture
+now closes child stdin and allows bounded native startup, with no production TLS
+relaxation.
+
+## Independent council — 2026-10-15 13:56 Europe/Warsaw
+
+Three fresh independent advisors reviewed actual source/results as pragmatic
+product owner, skeptical reliability engineer and first-time operator. All found
+the MCP-owned wizard a justified narrow change, and identified the old runbook's
+shell-first sequence as contradictory. They rejected treating green synthetic CI
+or sandbox-name detection as proof of the affected desktop's usable credentials.
+
+Accepted: make registration/reload → native setup → private form → actual folder
+read the single employee flow; avoid terminal diagnostics for employees; add one
+real MCP-boundary/disconnect test; state the remaining Windows host uncertainty.
+These changes are implemented. Accepted: stop expanding features and repeating
+audits; no conflicting advice required rejection. Next observable user benefit:
+the affected employee reaches a native `mail_folders` call and repeats it after
+reopening Codex without another login. No source changes to global sandbox/logon
+policy, impersonation or plaintext credential fallback are part of this fix.
 
 ## v0.2.1 OS certificate trust and agent-owned installation — 2026-10-15
 

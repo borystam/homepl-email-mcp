@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { mkdtemp, readFile, writeFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,14 +15,23 @@ import { createContext } from '../src/context.js';
 import { makeServer } from '../src/server.js';
 import { verifyAccount } from '../src/setup.js';
 
-const run = promisify(execFile);
+function run(file, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) reject(error);
+      else resolve({ stdout, stderr });
+    });
+    child.stdin?.on('error', error => { if (error.code !== 'EPIPE') reject(error); });
+    child.stdin?.end();
+  });
+}
 const email = 'tls-fixture@example.invalid';
 const password = 'synthetic-tls-password-only';
 const wrongPassword = 'synthetic-wrong-password-only';
 const privateProviderError = 'PRIVATE_PROVIDER_DIAGNOSTIC_DO_NOT_EXPOSE';
 
 async function environment(t) {
-  try { await run('openssl', ['version'], { timeout: 5000 }); }
+  try { await run('openssl', ['version'], { timeout: 15000 }); }
   catch (error) {
     if (error.code === 'ENOENT') { t.skip('OpenSSL is unavailable; synthetic TLS certificate cannot be generated.'); return null; }
     throw error;
@@ -93,7 +101,7 @@ async function environment(t) {
     counters: () => ({ smtpAuthentications, smtpDataCalls }) };
 }
 
-test('implicit TLS mail transport validates certificates and authentication on loopback', { timeout: 30000 }, async t => {
+test('implicit TLS mail transport validates certificates and authentication on loopback', { timeout: 60000 }, async t => {
   const fixture = await environment(t);
   if (!fixture) return;
 

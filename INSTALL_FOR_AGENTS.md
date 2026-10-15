@@ -2,7 +2,7 @@
 
 Use this runbook when the user requests installation of this connector. It prepares a local mailbox connection for that user's agent; it does not authorize sending mail, deleting content, or accessing unrelated accounts. The user's installation request authorizes the necessary download, local dependency installation, client configuration and stated read verification. Do not insert an additional approval gate for those steps.
 
-Target release: **v0.2.1** from **https://github.com/borystam/homepl-email-mcp**. Read that exact release's README for capabilities and limits. One authorized live Mac pilot verified IMAP/SMTP, Keychain, actual MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. Native desktop MCP calls also succeeded. A full app quit/reopen and OS logout/reboot remain unverified; perform the checks below on the employee's installation.
+Target release: **v0.3.0** from **https://github.com/borystam/homepl-email-mcp**. Read that exact release's README for capabilities and limits. One authorized live Mac pilot verified IMAP/SMTP, Keychain, actual MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. Native desktop MCP calls also succeeded. A full app quit/reopen and OS logout/reboot remain unverified; perform the checks below on the employee's installation.
 
 ## Installation means completing the local integration
 
@@ -20,11 +20,11 @@ mailbox details, or an action outside installation scope. Do not silently bypass
 policy, disable security software, run as Administrator, weaken TLS, or save
 passwords in files to claim success. Explain a genuine block precisely.
 
-## v0.2.1 modes and result handling
+## v0.3.0 modes and result handling
 
-The instructions below pin v0.2.1. `serve --read-only` removes all mutation tools,
+The instructions below pin v0.3.0. `serve --read-only` removes mailbox mutation tools,
 and `config --read-only` generates that mode. Verify `mail_accounts.access` and
-actual tool discovery after reload.
+actual tool discovery after reload. Both modes include `mail_setup` (local account changes, accurately marked non-read-only) and `mail_setup_status`; these do not enable mailbox writing tools.
 Use `mail_get_messages` for up to ten exact references; it returns metadata only
 unless bodies are requested. Large results use `completeResultFile` or batch
 `fullResultFile`; inspect the referenced private JSON rather than assuming fields
@@ -45,12 +45,17 @@ Check Node, npm, Git, the actual client and existing MCP configuration. Install 
 
 ## 2. Install the pinned release
 
-Choose a persistent per-user directory. On Windows, the suggested directory is `%LOCALAPPDATA%\Programs\homepl-email-mcp`.
+Choose a persistent directory readable by the desktop app's normal user. The
+per-user examples below apply when running as that user. If the installing shell
+runs as `CodexSandboxOnline`, use an already-authorized persistent shared project
+folder that the desktop user can read; do not install inside the sandbox user's
+private profile or guess another user's profile. Verify client access through
+actual MCP discovery after registration. On Windows, the suggested directory is `%LOCALAPPDATA%\Programs\homepl-email-mcp`.
 
 ```powershell
 $homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
 New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.2.1 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
+git clone --branch v0.3.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
 Set-Location $homeplRepo
 npm.cmd ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -63,7 +68,7 @@ On macOS, use Terminal:
 ```sh
 homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
 mkdir -p "$(dirname "$homeplRepo")"
-git clone --branch v0.2.1 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
+git clone --branch v0.3.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
 cd "$homeplRepo"
 npm ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -76,15 +81,77 @@ The credential-store dependency ships platform binaries; `doctor` checks whether
 the native binding loads, not whether a saved password can be retrieved. A failed
 platform binding is a setup failure, not a reason to store passwords in text files.
 
-## 2a. Agent-owned preflight and recovery
+## 3. Register and reload the server before mailbox login
 
-Before asking for a mailbox password, run `node src/cli.js doctor --storage`
-and `node scripts/keyring-smoke.js` yourself, from the same native Node/user
-context intended for setup and the MCP. The first checks the actual data directory
-and temporary credential read/write/delete; the second checks a synthetic saved
-credential across fresh processes. Both remove their test data and do not read
-mailbox passwords. Setup also performs the first check automatically before
-opening the form. Check exit codes; a loaded native binding alone is insufficient.
+Register this connector in the **active desktop client's** local MCP settings,
+before asking for any mailbox credentials. Never start its long-lived `serve`
+process from the model's shell and assume it is the registered desktop server.
+A configured MCP is started by the client when needed.
+
+Use absolute paths to both the native Node executable and `src/cli.js`; do not depend on the client's current working directory or PATH. For Codex in PowerShell:
+
+```powershell
+$homeplNode = (Get-Command node.exe).Source
+$homeplCli = (Resolve-Path .\src\cli.js).Path
+codex mcp add homepl-email -- $homeplNode $homeplCli serve
+codex mcp list
+```
+
+For macOS, from the installation directory:
+
+```sh
+homeplNode="$(node -p 'process.execPath')"
+homeplCli="$homeplRepo/src/cli.js"
+codex mcp add homepl-email -- "$homeplNode" "$homeplCli" serve
+codex mcp list
+```
+
+Use `codex mcp add` only when it targets the active desktop app's actual config.
+A sandbox shell's home/config may belong to another user. If that cannot be
+established, use the app's **Settings → MCP servers → Add server → STDIO** with
+the same Node/CLI values, then Restart. Prefer an available app UI/config tool so
+the employee does not have to run commands. See the official documentation linked
+below. Never overwrite unrelated app settings.
+
+Inspect existing entries first. Update the matching connector deliberately
+instead of creating duplicates or replacing unrelated settings. Keep the
+installation directory and native Node executable available at those paths.
+With a deliberate, host-accessible custom `HOME_MAIL_DATA_DIR`, prefer the generated configuration below so
+the desktop client retains that location.
+
+If the CLI is unavailable, run `node src/cli.js config` and merge its generated Codex TOML entry into the appropriate user configuration, or its JSON `mcpServers` entry into a client that supports that format. The generated TOML sets `tool_timeout_sec = 180`; this is useful for larger downloads. Do not paste the combined TOML-and-JSON command output as a single config document. Preserve existing settings and client approval policies. Never put mailbox credentials in MCP config. [Official Codex MCP setup](https://learn.chatgpt.com/docs/extend/mcp).
+
+Do not copy a `CodexSandboxOnline` profile path or sandbox-derived environment
+variables into the desktop MCP entry. Leave `HOME_MAIL_DATA_DIR` unset for a fresh
+installation so the host process chooses its own private per-user directory;
+preserve an existing deliberate override only after checking its purpose/access.
+
+Restart/reload the MCP client when required. If the active chat cannot refresh its tool catalog, tell the user exactly how to resume verification after reload. Do not report the connection as verified merely because a config file exists or `codex mcp list` lists an entry.
+
+## 3a. Check the actual MCP process and recover locally
+
+After registration and reload, call **mail_setup_status through the actual MCP**.
+It reports this MCP process's OS username, platform, Node version and data path.
+This is diagnostic information from the MCP, not a shell command or environment
+variable. A normal-looking username alone does not prove credential access.
+
+Do not gate installation on shell `doctor --storage`, `keyring-smoke.js` or CLI
+`setup`: a Codex Windows shell may run as `CodexSandboxOnline` with no usable
+WinCred logon session even when the desktop MCP can use the employee's store.
+Instead, **mail_setup performs the synthetic storage probe in its own process**
+before returning a private login URL. Use that result as the preflight check.
+The standalone scripts remain operator/CI diagnostics only.
+
+If the MCP itself reports `CodexSandboxOnline`/another `CodexSandbox...` identity,
+do not request a password or retry setup. Check the app's local MCP entry:
+command must be the absolute native Node executable, arguments the absolute
+`src/cli.js` and `serve`, without a `codex exec`, sandbox, service or other-user
+wrapper. Confirm the entry belongs to the active desktop app and is local, then
+reload and inspect `mail_setup_status` again. If the client still launches it in
+a restricted identity or policy blocks the intended launch, report that specific
+client launch block. A reload is not proof of a changed identity. Do not create
+scheduled tasks/services, impersonate another user, weaken the global sandbox or
+change logon policies to force success.
 
 Use a supported native Node LTS version: 22.19+ on 22.x, or 24.6+. Node 23 is not
 supported. Upgrade through the machine's permitted normal software channel when
@@ -108,14 +175,14 @@ Restore the shell's previous value afterward; do not change global environment
 or npm `strict-ssl` settings. This flag contains no credential.
 
 When a preflight/save error occurs, read only its fixed code and act on the
-specific failure. Complete the repair and rerun preflight yourself:
+specific failure. Complete the repair and retry `mail_setup` yourself:
 
 | Safe code | Agent action |
 | --- | --- |
 | `NODE_UNSUPPORTED` / `TLS_CA_UNSUPPORTED` | Install a supported native Node version and use that executable for setup and MCP registration. |
 | `CONFIG_CREDENTIAL_BINDING_FAILED` | Check Node/OS architecture and the pinned checkout; rerun `npm ci --omit=dev --ignore-scripts` including optional platform packages. Do not globally change npm policy. |
 | `CONFIG_DIRECTORY_UNWRITABLE` / `CONFIG_SETTINGS_WRITE_FAILED` | Check the selected data path and current user's write permissions. Use the normal per-user default for a fresh install. Preserve existing data and any deliberate override; do not delete accounts or change broad ACL/security policies. |
-| `CONFIG_CREDENTIAL_READ_FAILED` / `CONFIG_CREDENTIAL_WRITE_FAILED` / `CONFIG_CREDENTIAL_DELETE_FAILED` | Check that setup and MCP run as the employee's normal interactive desktop user, not another account, service or restricted agent credential context. Retry through the client's normal permitted host execution mode. Keep that same context for MCP launch and repeat both storage checks. Respect a genuine policy block; do not ask the employee to inspect or dump Credential Manager/Keychain. |
+| `CONFIG_CREDENTIAL_READ_FAILED` / `CONFIG_CREDENTIAL_WRITE_FAILED` / `CONFIG_CREDENTIAL_DELETE_FAILED` | Check that setup and MCP run as the employee's normal interactive desktop user, not another account, service or restricted agent credential context. Check the local desktop MCP entry and actual reported identity, then retry its `mail_setup` storage probe. Respect a genuine policy block; do not ask the employee to inspect or dump Credential Manager/Keychain. |
 | `CONFIG_SETTINGS_READ_FAILED` | Inspect only metadata structure/permissions locally; preserve the existing file. Repair a verified cause, not by resetting the mailbox or erasing data. |
 | `CONFIG_BUSY` | Identify the active connector setup and wait or close a setup you started. Never steal an active lock. After a crash, verify all setup processes have exited before removing only the stale `.accounts.lock`. |
 | `CONFIG_RECOVERY_REQUIRED` / `CONFIG_STORAGE_CLEANUP_FAILED` / `CONFIG_LOCK_RELEASE_FAILED` | Inspect account/test cleanup state without exposing credentials. Restore access and rerun the safe check; do not repeatedly overwrite accounts or claim completion while recovery is uncertain. |
@@ -131,9 +198,26 @@ If the user provides a full expected release commit, compare it to
 tag alone can move. Reject a mismatch and report it; do not fall back to `main`.
 Use the full tested commit printed in the release notes for reproducible handoffs.
 
-## 3. Guide the user through private login
+## 4. Connect from the conversation through MCP tools
 
-Run `node src/cli.js setup` and keep the process alive while the user completes the form. Use `--no-open` only if automatic browser opening does not fit the environment, then direct the user to the printed local URL. It expires after 15 minutes; restart setup if needed.
+First call `mail_accounts` and reuse a working saved mailbox; do not request
+another password just because the agent shell cannot access Windows credentials.
+For a new/reconnected mailbox, call **mail_setup** with an empty argument object.
+The tool accepts no password and runs the existing protected wizard inside the
+actual MCP process. It returns `pending` with a private localhost URL only after
+storage checks succeed, or `blocked` with safe diagnostic context.
+
+Open a pending URL in the app's built-in browser using its supported browser/UI
+tool when available. Otherwise give the employee a clickable private link. This
+is a private sign-in page, not a password message in the conversation. Do not
+navigate to unrelated accounts. Repeated calls reuse the same active wizard.
+The URL expires after 15 minutes. It must not enter public logs/issues.
+
+Wait for the employee to finish the form, then call **mail_setup_status**. Do not
+poll continuously, inspect the filled form, or infer success from opening a page.
+`connected` returns the account ID and removes the retired URL from status;
+`expired`/`cancelled` requires a new `mail_setup` when the employee wants to retry.
+MCP disconnect closes the active wizard, including one still starting.
 
 Tell the user to enter these directly into the local form:
 
@@ -142,7 +226,7 @@ Tell the user to enter these directly into the local form:
 - A separate SMTP hostname if needed. This release supports encrypted IMAP **993** and SMTP **465** only.
 - Optional exact Sent/Drafts/Trash paths when automatic discovery does not identify them correctly.
 
-**Never ask for, read back, copy, log, photograph or screenshot their password. Never place it in chat, tool arguments, shell history, an environment variable or a configuration file.** Do not inspect the browser's form after credentials have been entered. The user submits it themselves. Use the setup process's final connected/expired/cancelled result to determine completion.
+**Never ask for, read back, copy, log, photograph or screenshot their password. Never place it in chat, tool arguments, shell history, an environment variable or a configuration file.** Do not inspect the browser's form after credentials have been entered. The user submits it themselves. Use the native `mail_setup_status` result to determine completion.
 
 Setup verifies IMAP and SMTP credentials without sending mail, then saves the password in Windows Credential Manager/macOS Keychain/Linux Secret Service. If it fails, check the exact hostname and external-client access; retain certificate verification. Handle the setup URL as private and short-lived.
 
@@ -160,46 +244,16 @@ the user's Keychain contents, change its lock policy or approve unexpected apps.
 
 Remind the user once that retrieved email content may be sent to their AI provider. The connector runs locally, but the AI service may not.
 
-## 4. Register the server in the actual client
-
-Use absolute paths to both the native Node executable and `src/cli.js`; do not depend on the client's current working directory or PATH. For Codex in PowerShell:
-
-```powershell
-$homeplNode = (Get-Command node.exe).Source
-$homeplCli = (Resolve-Path .\src\cli.js).Path
-codex mcp add homepl-email -- $homeplNode $homeplCli serve
-codex mcp list
-```
-
-For macOS, from the installation directory:
-
-```sh
-homeplNode="$(node -p 'process.execPath')"
-homeplCli="$homeplRepo/src/cli.js"
-codex mcp add homepl-email -- "$homeplNode" "$homeplCli" serve
-codex mcp list
-```
-
-Inspect existing entries first. Update the matching connector deliberately
-instead of creating duplicates or replacing unrelated settings. Keep the
-installation directory and native Node executable available at those paths.
-With a custom `HOME_MAIL_DATA_DIR`, prefer the generated configuration below so
-the desktop client retains that location.
-
-If the CLI is unavailable, run `node src/cli.js config` and merge its generated Codex TOML entry into the appropriate user configuration, or its JSON `mcpServers` entry into a client that supports that format. The generated TOML sets `tool_timeout_sec = 180`; this is useful for larger downloads. Do not paste the combined TOML-and-JSON command output as a single config document. Preserve existing settings and client approval policies. Never put mailbox credentials in MCP config. [Official Codex MCP setup](https://learn.chatgpt.com/docs/extend/mcp).
-
-Restart/reload the MCP client when required. If the active chat cannot refresh its tool catalog, tell the user exactly how to resume verification after reload. Do not report the connection as verified merely because a config file exists or `codex mcp list` lists an entry.
-
 ## 5. Verify through real MCP tool calls
 
-After reload, use the actual connected tools:
+After `mail_setup_status` reports connected (or a saved login works), use the actual connected tools:
 
 1. `mail_accounts`: identify the account just connected and the local data paths.
 2. `mail_folders`: confirm live folder listing and obtain exact paths, statuses and UIDVALIDITY values.
 3. `mail_list_messages`: use the relevant inbox path and `pageSize: 3` to inspect a small sample of metadata.
 4. `mail_get_message`: if the mailbox has messages, inspect one sample with `includeBodies: false` using its exact account, folder, UID and UIDVALIDITY. Check headers and MIME part listing. Do not fetch bodies or attachments for setup unless the user requested them.
 
-An empty mailbox is a valid result; report that folder access worked and message reading could not be sampled. `node src/cli.js doctor --connect` is an additional login check, not a substitute for MCP discovery and live tool invocation. It sends no email.
+An empty mailbox is a valid result; report that folder access worked and message reading could not be sampled. A shell `doctor --connect` failure under a different user does not override successful native MCP calls. It is not an employee setup step.
 
 Then have the employee fully quit and reopen the MCP client. Repeat
 `mail_accounts` and `mail_folders` **without running setup again**, to verify the
