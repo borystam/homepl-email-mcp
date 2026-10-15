@@ -2,15 +2,21 @@
 
 Released version: v0.1.0. The current `codex/connector-hardening` work is an
 unreleased improvement set; installation pinned to v0.1.0 does not receive it.
-No real home.pl mailbox has been accessed or verified.
+One authorized home.pl mailbox has now passed the live Mac pilot described below.
 
 ## Live setup diagnostics — 2026-10-15
 
 The first browser retry reached provider authentication and reported `IMAP_AUTH`.
 The same credentials were also rejected by the provider's own login page. TLS
-connectivity and the external-client setting were checked. No mailbox connection
-has been saved, and no messages have been read or changed. Password correction or
-an explicitly authorized reset is needed before continuing the live pilot.
+connectivity and the external-client setting were checked. An explicitly
+authorized password reset resolved authentication. Setup then verified IMAP and
+SMTP and saved the credential in macOS Keychain.
+
+Actual stdio MCP calls discovered all 18 tools, listed live folders, read metadata
+for three messages and headers for one, then closed the server. A fresh MCP server
+process reused the saved credential and listed folders without running setup
+again. No messages were sent or changed. Desktop app tool-catalog reload, a full
+desktop-app restart and OS logout/reboot remain separate unverified checks.
 
 Setup now distinguishes fixed IMAP/SMTP authentication, network, TLS and unknown
 failure codes, plus IMAP folder discovery. Provider error text, responses, stacks
@@ -35,9 +41,11 @@ No conflicting advice required rejection. Password entry through the local form
 remains the normal employee flow; the pilot user explicitly authorized direct
 browser login assistance in this session.
 
-Next testable outcome: valid mailbox credentials produce a saved connection and
-an actual MCP folder listing. Further features, audits and repeated full-suite
-runs are deferred. The next council is due after another 30 minutes of active work.
+Outcome achieved: valid credentials produced a saved connection and actual MCP
+folder/metadata/header reads, including saved-login reuse by a fresh process.
+Next testable outcome: after a desktop app reload, repeat a folder read through
+its own tool catalog. Further features, audits and repeated full-suite runs are
+deferred. The next council is due after another 30 minutes of active work.
 
 ## Current result
 
@@ -67,7 +75,7 @@ history still requires every relevant folder and every cursor.
 
 ## Evidence
 
-- 119 tests passed locally on macOS/Node.js 26.5.0, with zero skipped tests.
+- 133 tests passed locally on macOS/Node.js 26.5.0, with zero skipped tests.
 - Loopback IMAP/SMTP verifies old history, sparse UIDs, raw bytes, duplicate
   headers/names, Polish text, nested RFC822 attachments, server reply drafts,
   exact deletion and partial/all-recipient SMTP rejection.
@@ -87,8 +95,9 @@ history still requires every relevant folder and every cursor.
   TLS tests explicitly skip when
   OpenSSL is unavailable, rather than claim TLS validation without running it.
 
-Limits: synthetic servers are not proof of home.pl-specific behavior. Linux Secret
-Service persistence and a real employee's MCP client/login remain unverified.
+Limits: the single live Mac pilot does not establish every home.pl configuration.
+Linux Secret Service persistence and the desktop app reload/reboot checks remain
+unverified.
 Read-response bounds do not cap all provider metadata allocation; very sparse UID
 spaces can require many pages. Local same-user filesystem access is not a separate
 security boundary. Downloaded mail remains private local data, not application-encrypted.

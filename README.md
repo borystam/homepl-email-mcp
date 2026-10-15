@@ -6,13 +6,16 @@ Windows and macOS (Apple silicon and Intel) use the same connector and tools.
 See the [Windows installation](#manual-installation-on-windows) or
 [Mac installation](#manual-installation-on-macos).
 
-This is an independent community project, not an official home.pl product. Version **0.1.0** is an initial release. It has local automated tests; a live home.pl mailbox has **not** yet been tested. Pilot it with one employee before repeating the installation for the team.
+This is an independent community project, not an official home.pl product. Version **0.1.0** is an initial release. The current development revision has completed one live Mac pilot: IMAP/SMTP verification, folder and metadata/header reads through MCP, and saved-login reuse by a fresh process. Desktop-app reload and OS reboot checks remain. The release installation instructions below still pin **v0.1.0**, which does not include the later setup fixes. Pilot the intended version with one employee before repeating installation for the team.
 
 ## Unreleased hardening changes
 
 The current development branch adds the following improvements. The pinned
 **v0.1.0 installation prompt below does not include them yet**.
 
+- Native browser setup no longer rejects its own form POST with “Forbidden”.
+  Verification errors now identify the failing IMAP/SMTP stage with fixed safe
+  messages, without exposing provider diagnostics or credentials.
 - `serve --read-only` exposes only mailbox reading tools. `config --read-only`
   generates the corresponding client settings; write tools are absent from the
   MCP catalog. This limits this connector process, not the mailbox password's
