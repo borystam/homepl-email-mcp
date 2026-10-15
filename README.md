@@ -18,7 +18,7 @@ This is an independent community project, not an official home.pl product. Versi
   the installing agent can diagnose them without reading the mailbox password.
 - The agent installation runbook covers prerequisites, storage recovery, client
   integration and verification. Use `doctor --storage` for a credential-free
-  storage check. Node.js 22.15+ (22.x) or 24+ is required.
+  storage check. Node.js 22.19+ (22.x) or 24.6+ is required.
 
 ## Changes in v0.2.0
 
@@ -83,7 +83,7 @@ Shared-namespace coverage remains unresolved; it has not been tested on home.pl.
 
 ## Manual installation on Windows
 
-Use native Windows Node.js **22.15+ on the 22.x line, or 24+**, npm, Git, and a local MCP-capable agent. Run the connector as the employee's normal desktop user so it can use that user's credential store. An administrator or a different OS account would have different settings and credentials.
+Use native Windows Node.js **22.19+ on the 22.x line, or 24.6+**, npm, Git, and a local MCP-capable agent. Run the connector as the employee's normal desktop user so it can use that user's credential store. An administrator or a different OS account would have different settings and credentials.
 
 In PowerShell, choose a persistent installation directory:
 
@@ -120,7 +120,7 @@ Restart or reload the client as its MCP configuration requires. A configuration 
 
 ## Manual installation on macOS
 
-Use Node.js **22.15+ on the 22.x line, or 24+** for the Mac's native architecture, npm, Git, and a
+Use Node.js **22.19+ on the 22.x line, or 24.6+** for the Mac's native architecture, npm, Git, and a
 local MCP-capable agent. Run as the employee's usual desktop user, without `sudo`.
 In Terminal, choose a persistent directory (keep it after setup):
 
@@ -223,7 +223,7 @@ Removal deletes the saved mailbox credential and account entry. Existing downloa
 | G DATA/company inspection certificate | v0.2.1 automatically includes the OS-trusted CA store for setup and later email access. The certificate must already be trusted by the logged-in user/OS. Restart the setup/MCP process after OS trust changes. Never disable certificate validation or trust an arbitrary certificate downloaded from an error. |
 | Connection works but saving fails | The agent runs `node src/cli.js doctor --storage` in the same native-user execution context as setup and the MCP. Follow the fixed `CONFIG_*` code using the installation runbook; passwords stay in the OS keyring. |
 | Credential store unavailable | Run as the same logged-in desktop user. Unlock their credential store. On Linux, check Secret Service. Do not substitute plaintext password storage. |
-| `node`/`npm` not found | Install a supported native Node.js LTS version (22.15+ or 24+) through the organization's normal software channel, then restart the terminal/client so its PATH updates. On PowerShell, use `npm.cmd`; use `codex.cmd` if an npm-installed `codex.ps1` is blocked. |
+| `node`/`npm` not found | Install a supported native Node.js LTS version (22.19+ or 24.6+) through the organization's normal software channel, then restart the terminal/client so its PATH updates. On PowerShell, use `npm.cmd`; use `codex.cmd` if an npm-installed `codex.ps1` is blocked. |
 | Server configured but tools absent | Check absolute Node/CLI paths, run `node src/cli.js doctor`, then reload the MCP client. Check workspace restrictions and whether this chat actually runs with local MCP access. |
 | Tools exist but account is missing | Run setup as the same OS user and with the same `HOME_MAIL_DATA_DIR` as the MCP process. |
 | A search page is empty but has a cursor | Continue the cursor. Large gaps between UIDs can require another bounded scan. Search every relevant folder before claiming completeness. |
@@ -242,6 +242,13 @@ npm test
 ```
 
 Tests use synthetic data and local fixtures, not employee accounts, and do not send real email. Passing local tests does not establish compatibility with a particular home.pl account or every client/OS combination.
+
+Dependencies use exact direct versions and a committed lockfile with integrity
+hashes. Install with `npm ci --ignore-scripts`; the project `.npmrc` also disables
+install scripts and makes future dependency additions exact by default. Keep
+optional packages enabled because they contain the native OS credential binding.
+Review and test dependency updates deliberately; pins and registry signatures do
+not establish that package code is safe or replace future security updates.
 
 ## Connector design comparison
 

@@ -79,34 +79,40 @@ function runWorker(request) {
 async function updateWindowsRoot(action, certPath, thumbprint) {
   assert.ok(['add', 'remove'].includes(action));
   assert.match(thumbprint, /^[A-F0-9]{40}$/);
-  // Paths and the exact identity travel through env, not PowerShell source.
-  // Never enumerate, print, or remove unrelated certificates.
+  assert.equal(new X509Certificate(await readFile(certPath)).fingerprint.replaceAll(':', ''), thumbprint);
+  // X509Store.Add can display an interactive root-trust prompt. Certutil's
+  // force flag performs this synthetic CI import without waiting for UI.
+  // PowerShell only verifies the exact thumbprint through a read-only store.
+  const count = await windowsRootCount(thumbprint);
+  if (action === 'add') assert.equal(count, 0, 'Synthetic root unexpectedly exists');
+  else if (count === 0) return;
+  await run('certutil.exe', ['-user', '-f', action === 'add' ? '-addstore' : '-delstore', 'Root', action === 'add' ? certPath : thumbprint], {
+    timeout: 20_000, windowsHide: true,
+  });
+  assert.equal(await windowsRootCount(thumbprint), action === 'add' ? 1 : 0, 'Synthetic root-store update failed');
+}
+
+async function windowsRootCount(thumbprint) {
+  assert.match(thumbprint, /^[A-F0-9]{40}$/);
+  // Never print or remove unrelated certificates. The thumbprint travels
+  // through env rather than becoming executable PowerShell source.
   const command = `
 $ErrorActionPreference = 'Stop'
 $expected = $env:HOMEPL_SMOKE_CERT_THUMBPRINT
-$cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($env:HOMEPL_SMOKE_CERT_PATH)
-if ($cert.Thumbprint -ne $expected) { throw 'Synthetic certificate identity mismatch' }
 $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser')
-$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
 try {
-  $matches = $store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $expected, $false)
-  if ($env:HOMEPL_SMOKE_CERT_ACTION -eq 'add') {
-    if ($matches.Count -ne 0) { throw 'Synthetic root unexpectedly exists' }
-    $store.Add($cert)
-    if ($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $expected, $false).Count -ne 1) { throw 'Synthetic root was not installed' }
-  } else {
-    foreach ($match in $matches) { $store.Remove($match) }
-    if ($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $expected, $false).Count -ne 0) { throw 'Synthetic root was not removed' }
-  }
+  [Console]::WriteLine($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $expected, $false).Count)
 } finally {
   $store.Close()
-  $cert.Dispose()
 }
 `;
-  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], {
+  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], {
     timeout: 20_000, windowsHide: true,
-    env: { ...process.env, HOMEPL_SMOKE_CERT_ACTION: action, HOMEPL_SMOKE_CERT_PATH: certPath, HOMEPL_SMOKE_CERT_THUMBPRINT: thumbprint },
+    env: { ...process.env, HOMEPL_SMOKE_CERT_THUMBPRINT: thumbprint },
   });
+  assert.match(stdout.trim(), /^\d+$/);
+  return Number(stdout.trim());
 }
 
 async function smoke() {
@@ -126,7 +132,7 @@ async function smoke() {
   try {
     await writeFile(configPath, `[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=extensions\n[dn]\nCN=homepl-system-ca-smoke-${randomUUID()}\n[extensions]\nsubjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\nextendedKeyUsage=serverAuth\n`, { mode: 0o600 });
     await run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-sha256', '-nodes', '-days', '1', '-config', configPath, '-keyout', keyPath, '-out', certPath], { timeout: 20_000 });
-    // DER works with the Windows PowerShell/.NET Framework certificate reader.
+    // Use DER for the native Windows certificate import.
     await run('openssl', ['x509', '-in', certPath, '-outform', 'DER', '-out', storeCertPath], { timeout: 5000 });
     const [key, cert] = await Promise.all([readFile(keyPath), readFile(certPath)]);
     thumbprint = new X509Certificate(cert).fingerprint.replaceAll(':', '');

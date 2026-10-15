@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import tls from 'node:tls';
-import { getMailTlsOptions } from '../src/tls.js';
+import { assertSupportedNodeVersion, getMailTlsOptions } from '../src/tls.js';
+
+test('runtime baseline excludes Windows file-identity inconsistencies in earlier Node releases', () => {
+  for (const version of ['20.20.0', '22.15.0', '22.18.0', '23.11.0', '24.0.0', '24.5.0']) {
+    assert.throws(() => assertSupportedNodeVersion(version), { code: 'NODE_UNSUPPORTED' });
+  }
+  for (const version of ['22.19.0', '22.23.3', '24.6.0', '24.19.0', '26.5.0']) {
+    assert.doesNotThrow(() => assertSupportedNodeVersion(version));
+  }
+});
 
 test('mail trust preserves Node defaults and extra roots, adds OS roots and deduplicates', t => {
   const calls = [];

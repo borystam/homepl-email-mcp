@@ -35,7 +35,7 @@ were omitted by the server. Generated config retains an explicit
 
 Confirm that this agent can execute on the employee's computer and load local **stdio MCP** servers. Ordinary browser-only ChatGPT cannot perform this installation or inherit a local Codex configuration. If no suitable local execution/client exists, explain that concrete requirement and stop instead of claiming success.
 
-Support Windows and macOS (Apple silicon or Intel), using native Node.js 22.15+ (22.x) or 24+ and
+Support Windows and macOS (Apple silicon or Intel), using native Node.js 22.19+ (22.x) or 24.6+ and
 the employee's normal desktop account. On Windows, do not silently switch to WSL:
 it has a different credential store and filesystem. On Mac, use native Node and
 do not run setup or the MCP with `sudo`. Linux also works with a persistent,
@@ -86,9 +86,13 @@ credential across fresh processes. Both remove their test data and do not read
 mailbox passwords. Setup also performs the first check automatically before
 opening the form. Check exit codes; a loaded native binding alone is insufficient.
 
-Use a supported native Node LTS version: 22.15+ on 22.x, or 24+. Node 23 is not
+Use a supported native Node LTS version: 22.19+ on 22.x, or 24.6+. Node 23 is not
 supported. Upgrade through the machine's permitted normal software channel when
 necessary, then update the client's absolute Node path as well as the shell.
+Install the current patched LTS, rather than choosing an old release just because
+it meets the compatibility minimum. Earlier Windows runtimes have an upstream
+[filesystem identity inconsistency](https://github.com/libuv/libuv/commit/82cdfb75f)
+that correctly trips this connector's attachment/outbox checks.
 
 All IMAP/SMTP connections automatically merge Node's default/additional roots
 with OS-trusted roots. An already Windows-trusted G DATA/company inspection root
@@ -102,7 +106,7 @@ specific failure. Complete the repair and rerun preflight yourself:
 
 | Safe code | Agent action |
 | --- | --- |
-| `TLS_CA_UNSUPPORTED` | Install a supported native Node version and use that executable for setup and MCP registration. |
+| `NODE_UNSUPPORTED` / `TLS_CA_UNSUPPORTED` | Install a supported native Node version and use that executable for setup and MCP registration. |
 | `CONFIG_CREDENTIAL_BINDING_FAILED` | Check Node/OS architecture and the pinned checkout; rerun `npm ci --omit=dev --ignore-scripts` including optional platform packages. Do not globally change npm policy. |
 | `CONFIG_DIRECTORY_UNWRITABLE` / `CONFIG_SETTINGS_WRITE_FAILED` | Check the selected data path and current user's write permissions. Use the normal per-user default for a fresh install. Preserve existing data and any deliberate override; do not delete accounts or change broad ACL/security policies. |
 | `CONFIG_CREDENTIAL_READ_FAILED` / `CONFIG_CREDENTIAL_WRITE_FAILED` / `CONFIG_CREDENTIAL_DELETE_FAILED` | Check that setup and MCP run as the employee's normal interactive desktop user, not another account, service or restricted agent credential context. Retry through the client's normal permitted host execution mode. Keep that same context for MCP launch and repeat both storage checks. Respect a genuine policy block; do not ask the employee to inspect or dump Credential Manager/Keychain. |
@@ -115,6 +119,11 @@ without discarding local changes. Keep the same data directory, OS user and
 credential service. An upgrade does not require removing or reentering a saved
 mailbox credential. If a native store remains genuinely unavailable, report that
 specific block; no plaintext fallback is implemented.
+
+If the user provides a full expected release commit, compare it to
+`git rev-parse HEAD` before installing dependencies or running source. A release
+tag alone can move. Reject a mismatch and report it; do not fall back to `main`.
+Use the full tested commit printed in the release notes for reproducible handoffs.
 
 ## 3. Guide the user through private login
 

@@ -1,11 +1,19 @@
 import tls from 'node:tls';
 
 export const tlsErrorDescriptions = Object.freeze({
-  TLS_CA_UNSUPPORTED: 'System certificate trust requires Node.js 22.15 or newer on the 22.x line, or Node.js 24 or newer. Update the native Node executable used by setup and the MCP client.',
+  NODE_UNSUPPORTED: 'Use native Node.js 22.19 or newer on the 22.x line, or Node.js 24.6 or newer. Earlier versions have Windows file-identity inconsistencies. Update the executable used by setup and the MCP client.',
+  TLS_CA_UNSUPPORTED: 'System certificate trust requires Node.js 22.19 or newer on the 22.x line, or Node.js 24.6 or newer. Update the native Node executable used by setup and the MCP client.',
   TLS_CA_UNAVAILABLE: 'Trusted certificates could not be loaded from Node.js and the operating system. Check the local certificate store and restart the connector; TLS verification remains required.',
 });
 
+export function assertSupportedNodeVersion(version = process.versions.node) {
+  const [major, minor] = version.split('.').map(Number);
+  if ((major === 22 && minor >= 19) || (major === 24 && minor >= 6) || major > 24) return;
+  throw Object.assign(new Error(tlsErrorDescriptions.NODE_UNSUPPORTED), { code: 'NODE_UNSUPPORTED' });
+}
+
 export function getMailTlsOptions() {
+  assertSupportedNodeVersion();
   if (typeof tls.getCACertificates !== 'function') {
     throw Object.assign(new Error(tlsErrorDescriptions.TLS_CA_UNSUPPORTED), { code: 'TLS_CA_UNSUPPORTED' });
   }
