@@ -9,10 +9,30 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import tls from 'node:tls';
 
-const run = promisify(execFile);
+function run(file, args, options, label = file) {
+  process.stdout.write(`[system-ca] ${label}: started\n`);
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (error, stdout, stderr) => {
+      if (!error) {
+        process.stdout.write(`[system-ca] ${label}: completed\n`);
+        return resolve({ stdout, stderr });
+      }
+      // This script is restricted to disposable CI and only handles synthetic
+      // data. Bound diagnostics so the next failure identifies the exact tool.
+      process.stderr.write(`[system-ca] ${JSON.stringify({
+        label, code: error.code, killed: error.killed, signal: error.signal,
+        stdout: String(stdout).slice(-2000), stderr: String(stderr).slice(-2000),
+      })}\n`);
+      reject(new Error(`${label} failed (code ${error.code ?? 'none'}, signal ${error.signal ?? 'none'})`));
+    });
+    // execFile creates an open stdin pipe. Native CLI tools must receive EOF;
+    // otherwise PowerShell can wait for further input instead of terminating.
+    child.stdin?.on('error', error => { if (error.code !== 'EPIPE') reject(error); });
+    child.stdin?.end();
+  });
+}
 const trustErrors = new Set([
   'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN',
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
@@ -83,16 +103,16 @@ async function updateWindowsRoot(action, certPath, thumbprint) {
   // X509Store.Add can display an interactive root-trust prompt. Certutil's
   // force flag performs this synthetic CI import without waiting for UI.
   // PowerShell only verifies the exact thumbprint through a read-only store.
-  const count = await windowsRootCount(thumbprint);
+  const count = await windowsRootCount(thumbprint, `root:${action}:count-before`);
   if (action === 'add') assert.equal(count, 0, 'Synthetic root unexpectedly exists');
   else if (count === 0) return;
   await run('certutil.exe', ['-user', '-f', action === 'add' ? '-addstore' : '-delstore', 'Root', action === 'add' ? certPath : thumbprint], {
     timeout: 20_000, windowsHide: true,
-  });
-  assert.equal(await windowsRootCount(thumbprint), action === 'add' ? 1 : 0, 'Synthetic root-store update failed');
+  }, `root:${action}:certutil`);
+  assert.equal(await windowsRootCount(thumbprint, `root:${action}:count-after`), action === 'add' ? 1 : 0, 'Synthetic root-store update failed');
 }
 
-async function windowsRootCount(thumbprint) {
+async function windowsRootCount(thumbprint, label) {
   assert.match(thumbprint, /^[A-F0-9]{40}$/);
   // Never print or remove unrelated certificates. The thumbprint travels
   // through env rather than becoming executable PowerShell source.
@@ -106,11 +126,12 @@ try {
 } finally {
   $store.Close()
 }
+exit 0
 `;
-  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], {
+  const { stdout } = await run('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], {
     timeout: 20_000, windowsHide: true,
     env: { ...process.env, HOMEPL_SMOKE_CERT_THUMBPRINT: thumbprint },
-  });
+  }, label);
   assert.match(stdout.trim(), /^\d+$/);
   return Number(stdout.trim());
 }
@@ -151,12 +172,13 @@ async function smoke() {
     await runWorker({ port, mode: 'system', expected: 'accepted' });
     stage = 'hostname validation';
     await runWorker({ port, mode: 'wrong-host', expected: 'wrong-host' });
-  } catch {
+  } catch (error) {
+    process.stderr.write(`[system-ca] ${stage}: ${error.message}\n`);
     failure = stage;
   } finally {
     if (thumbprint) {
       try { await updateWindowsRoot('remove', storeCertPath, thumbprint); }
-      catch { failure = 'temporary root cleanup'; }
+      catch (error) { process.stderr.write(`[system-ca] cleanup: ${error.message}\n`); failure = 'temporary root cleanup'; }
     }
     if (!failure && server?.listening) {
       try { await runWorker({ port: server.address().port, mode: 'system', expected: 'untrusted' }); }

@@ -101,6 +101,12 @@ certificate and hostname checks enabled. Do not change the computer's trust
 store or antivirus settings as an installation workaround. Restart the connector
 after administrator-approved OS certificate changes.
 
+If HTTPS package downloads are also inspected, npm runs before this connector's
+TLS helper. Run the necessary npm command with process-local
+`NODE_USE_SYSTEM_CA=1` on the supported Node version so it uses the same OS trust.
+Restore the shell's previous value afterward; do not change global environment
+or npm `strict-ssl` settings. This flag contains no credential.
+
 When a preflight/save error occurs, read only its fixed code and act on the
 specific failure. Complete the repair and rerun preflight yourself:
 
