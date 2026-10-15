@@ -6,12 +6,11 @@ Windows and macOS (Apple silicon and Intel) use the same connector and tools.
 See the [Windows installation](#manual-installation-on-windows) or
 [Mac installation](#manual-installation-on-macos).
 
-This is an independent community project, not an official home.pl product. Version **0.1.0** is an initial release. The current development revision has completed one live Mac pilot: IMAP/SMTP verification, folder and metadata/header reads through MCP, and saved-login reuse by a fresh process. Desktop-app reload and OS reboot checks remain. The release installation instructions below still pin **v0.1.0**, which does not include the later setup fixes. Pilot the intended version with one employee before repeating installation for the team.
+This is an independent community project, not an official home.pl product. Version **0.2.0** includes the setup and reliability fixes described below. One authorized live Mac pilot verified IMAP/SMTP, macOS Keychain, discovery of all 18 MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. The desktop app also loaded the native tools and successfully called `mail_accounts` and `mail_folders`. A full app quit/reopen and OS logout/reboot remain unverified. Pilot the intended version with one employee before repeating installation for the team.
 
-## Unreleased hardening changes
+## Changes in v0.2.0
 
-The current development branch adds the following improvements. The pinned
-**v0.1.0 installation prompt below does not include them yet**.
+Version **v0.2.0** includes these improvements over the initial v0.1.0 release:
 
 - Native browser setup no longer rejects its own form POST with “Forbidden”.
   Verification errors now identify the failing IMAP/SMTP stage with fixed safe
@@ -35,16 +34,15 @@ The current development branch adds the following improvements. The pinned
   Explicit SMTP authentication/message rejections report known failure; disconnects
   or timeouts after transmission still report an unknown outcome.
 
-For a read-only pilot of this branch, register the server with `serve --read-only`
+For a read-only installation, register the server with `serve --read-only`
 (or merge `node src/cli.js config --read-only`). Check `mail_accounts.access` is
-`read-only` and that sending/deletion tools are absent. Inspect the commit before
-installing development code; do not call this branch the released v0.1.0 package.
+`read-only` and that sending/deletion tools are absent.
 
 ## Give this to the employee's agent
 
 Paste this into **an agent with access to the employee's computer and support for local stdio MCP servers**:
 
-> Install https://github.com/borystam/homepl-email-mcp at release v0.1.0 on this computer. Read and follow INSTALL_FOR_AGENTS.md from that release. Install the required local dependencies, configure the connector in this agent, and guide me through connecting my home.pl mailbox. I will enter my mailbox password myself in the private local setup form; never ask me to put it in chat or screenshots. After connecting, verify the actual MCP tools, list my folders, and inspect metadata and headers for up to three messages. Do not send, move, change or delete mail as part of setup. Tell me the installed version and whether the live read check succeeded.
+> Install https://github.com/borystam/homepl-email-mcp at release v0.2.0 on this computer. Read and follow INSTALL_FOR_AGENTS.md from that exact release. Install the required local dependencies, configure the connector in this agent, and guide me through connecting my home.pl mailbox. I will enter my mailbox password myself in the private local setup form; never ask me to put it in chat or screenshots. After connecting, verify the actual MCP tools, list my folders, and inspect metadata and headers for up to three messages. Do not send, move, change or delete mail as part of setup. Tell me the installed version and commit, which live checks succeeded, and any remaining restart or reboot check.
 
 The employee needs their **full mailbox email address, mailbox password and exact mail server hostname**. The home.pl hosting administrator password is not the mailbox password.
 
@@ -61,7 +59,7 @@ Ordinary browser-only ChatGPT cannot run this local installer or read local Code
 | Attachments | Downloads arbitrary MIME parts by part ID, including inline images, binary files and attached messages. Repeated filenames are unambiguous. MIME transfer encodings are decoded; inline display text can be normalized. The agent needs suitable file tools to interpret downloaded content. |
 | Search | IMAP search across headers and message text, with dates, addresses, flags and size filters. Searches are per folder and paginated. It does not OCR images or search inside binary attachments. Header searches can find related messages; there is no claim of automatic complete conversation reconstruction. |
 | Compose and send | New mail, replies, reply-all, forwards, CC/BCC, text/HTML and local attachments. A prepared operation has a preview and a separate send action. The transmitted MIME is retained locally; Sent copies retain BCC metadata and therefore can differ by that header. SMTP acceptance and Sent-copy saving are reported separately; uncertain sends must not be retried blindly. |
-| Drafts | Save and update server drafts, then prepare them for sending. On the development branch, save reply/reply-all/forward and incomplete drafts as well. Updating requires UIDPLUS and returns a new UID. Sending a prepared server draft retains the source draft. |
+| Drafts | Save and update new/reply/reply-all/forward server drafts, including incomplete drafts, then prepare them for sending. Updating requires UIDPLUS and returns a new UID. Sending a prepared server draft retains the source draft. |
 | Organize | Flags, move, copy, trash; create, rename, subscribe, unsubscribe and delete folders. Message mutations require observed UIDVALIDITY. Permanent message deletion requires UIDPLUS and targets one exact UID. |
 
 The connector cannot recover mail already deleted from the server or mail kept only in an old POP/local archive. It can retrieve encrypted S/MIME/PGP content, but does not decrypt it or manage decryption keys. It does not guarantee that an AI can interpret every file format. Retrieval is on demand, not an automatic mailbox backup or a continuously synchronized search index.
@@ -80,7 +78,7 @@ In PowerShell, choose a persistent installation directory:
 ```powershell
 $homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
 New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.1.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
+git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
 Set-Location $homeplRepo
 npm.cmd ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -104,7 +102,7 @@ codex mcp add homepl-email -- $homeplNode $homeplCli serve
 codex mcp list
 ```
 
-If the Codex CLI is unavailable, run `node src/cli.js config`. It prints a ready-to-merge Codex TOML entry and a JSON `mcpServers` entry for clients that use that format, with this machine's absolute paths. Merge the appropriate entry into existing client settings; do not replace the whole settings file. No mailbox password belongs in either configuration. On the development branch, an explicit `HOME_MAIL_DATA_DIR` is retained in the generated client `env` settings so a separately launched desktop client uses the same account store. [Official Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
+If the Codex CLI is unavailable, run `node src/cli.js config`. It prints a ready-to-merge Codex TOML entry and a JSON `mcpServers` entry for clients that use that format, with this machine's absolute paths. Merge the appropriate entry into existing client settings; do not replace the whole settings file. No mailbox password belongs in either configuration. An explicit `HOME_MAIL_DATA_DIR` is retained in the generated client `env` settings so a separately launched desktop client uses the same account store. [Official Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
 
 Restart or reload the client as its MCP configuration requires. A configuration entry alone does not prove the connection works: ask the agent to call `mail_accounts`, `mail_folders`, and `mail_list_messages` with `pageSize: 3`. It can inspect headers using `mail_get_message` with `includeBodies: false`. Initial verification should not send, change or delete any mail.
 
@@ -117,7 +115,7 @@ In Terminal, choose a persistent directory (keep it after setup):
 ```sh
 homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
 mkdir -p "$(dirname "$homeplRepo")"
-git clone --branch v0.1.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
+git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
 cd "$homeplRepo"
 npm ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -178,8 +176,9 @@ For a newly created mailbox, home.pl says to sign into webmail once before
 configuring a mail client. Its documented mail-client login is the full email
 address plus mailbox password. [home.pl's setup instructions](https://pomoc.home.pl/baza-wiedzy/jak-skonfigurowac-program-do-obslugi-poczty-e-mail).
 The AI application's own sign-in and company policies are separate from this
-saved mailbox login. A live home.pl pilot, including client restart and a normal
-Mac logout/reboot check, remains necessary before promising unattended operation.
+saved mailbox login. The live Mac pilot verified saved-login reuse by a fresh
+process and native desktop MCP calls; a full client quit/reopen and normal Mac
+logout/reboot check remain necessary before promising unattended operation.
 
 ## Credentials and local data
 
@@ -259,6 +258,6 @@ home.pl password-based IMAP connection.
 
 Account-wide search orchestration and exact-header related-message discovery
 remain useful future conveniences. Current searches still require every relevant
-folder and cursor; automatic complete threading is not implemented. The next
-validation step is one authorized live home.pl pilot, rather than adding an index,
-background sync or hosted infrastructure.
+folder and cursor; automatic complete threading is not implemented. One authorized
+live Mac pilot has passed. Full client quit/reopen and OS logout/reboot checks
+remain before broader rollout.

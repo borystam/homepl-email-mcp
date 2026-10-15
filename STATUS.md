@@ -1,8 +1,25 @@
 # Release and validation status
 
-Released version: v0.1.0. The current `codex/connector-hardening` work is an
-unreleased improvement set; installation pinned to v0.1.0 does not receive it.
-One authorized home.pl mailbox has now passed the live Mac pilot described below.
+Version: **v0.2.0**. The installation runbook and employee prompt pin this version
+and include the hardening described below. See GitHub Releases for the published
+tag and downloadable release assets; v0.1.0 remains an older initial release.
+One authorized home.pl mailbox has passed the live Mac pilot. Full app
+quit/reopen and OS logout/reboot checks remain unverified.
+
+## v0.2.0 publication readiness — 2026-10-15
+
+The validated code at `399e381` passed all eight CI jobs: Windows, macOS Apple
+silicon, macOS Intel and Ubuntu, each on Node.js 22 and 24. Windows/macOS jobs
+also checked synthetic native saved credentials across fresh processes. The
+local suite passed 133 tests with zero skips. Release preparation updates the
+version and documentation without adding features or changing dependencies.
+
+The live Mac pilot verified IMAP and SMTP login, Keychain storage, discovery of
+all 18 actual MCP tools, seven folders, metadata for three messages and headers
+for one, plus saved-login reuse by a fresh MCP server process. The desktop app
+then loaded the native connector tools; its `mail_accounts` and `mail_folders`
+calls succeeded. No messages were sent or changed. A full app quit/reopen and
+normal OS logout/reboot remain separate checks before broader rollout.
 
 ## Live setup diagnostics — 2026-10-15
 
@@ -12,11 +29,12 @@ connectivity and the external-client setting were checked. An explicitly
 authorized password reset resolved authentication. Setup then verified IMAP and
 SMTP and saved the credential in macOS Keychain.
 
-Actual stdio MCP calls discovered all 18 tools, listed live folders, read metadata
-for three messages and headers for one, then closed the server. A fresh MCP server
-process reused the saved credential and listed folders without running setup
-again. No messages were sent or changed. Desktop app tool-catalog reload, a full
-desktop-app restart and OS logout/reboot remain separate unverified checks.
+Actual stdio MCP calls discovered all 18 tools, listed seven live folders, read
+metadata for three messages and headers for one, then closed the server. A fresh
+MCP server process reused the saved credential and listed folders without running setup
+again. No messages were sent or changed. The desktop app subsequently loaded its
+native tool catalog and successfully called `mail_accounts` and `mail_folders`.
+A full desktop-app quit/reopen and OS logout/reboot remain unverified.
 
 Setup now distinguishes fixed IMAP/SMTP authentication, network, TLS and unknown
 failure codes, plus IMAP folder discovery. Provider error text, responses, stacks
@@ -43,9 +61,11 @@ browser login assistance in this session.
 
 Outcome achieved: valid credentials produced a saved connection and actual MCP
 folder/metadata/header reads, including saved-login reuse by a fresh process.
-Next testable outcome: after a desktop app reload, repeat a folder read through
-its own tool catalog. Further features, audits and repeated full-suite runs are
-deferred. The next council is due after another 30 minutes of active work.
+The next outcome was also achieved: the desktop app loaded its native tool
+catalog and repeated the account/folder reads successfully. Next testable
+outcome: publish the validated v0.2.0 release and provide its exact setup prompt.
+Further features, audits and repeated full-suite runs are deferred. The next
+council is due after another 30 minutes of active work.
 
 ## Current result
 
@@ -89,15 +109,15 @@ history still requires every relevant folder and every cursor.
   leaf/ancestor symlink replacement and prepared-message integrity/retry prevention.
 - Production dependency audit: zero reported vulnerabilities. `git diff --check`
   passes. No new production dependencies were added.
-- CI runs the suite on Windows, macOS (Apple silicon and Intel) and Ubuntu with
-  Node.js 22 and 24; consult the pull request checks for execution results.
+- All eight CI jobs passed at `399e381`: Windows, macOS (Apple silicon and Intel)
+  and Ubuntu with Node.js 22 and 24.
   Windows/macOS also verify native saved credentials across fresh processes.
   TLS tests explicitly skip when
   OpenSSL is unavailable, rather than claim TLS validation without running it.
 
 Limits: the single live Mac pilot does not establish every home.pl configuration.
-Linux Secret Service persistence and the desktop app reload/reboot checks remain
-unverified.
+Linux Secret Service persistence, full desktop-app quit/reopen and OS logout/reboot
+checks remain unverified.
 Read-response bounds do not cap all provider metadata allocation; very sparse UID
 spaces can require many pages. Local same-user filesystem access is not a separate
 security boundary. Downloaded mail remains private local data, not application-encrypted.
@@ -121,7 +141,8 @@ Keychain, and does not contact home.pl.
 The connector uses saved mailbox passwords with no OAuth/refresh-token expiry.
 Documentation distinguishes that from password changes, credential-store access,
 home.pl's external-client block, and the AI client's own login. A real mailbox
-pilot after client restart and normal OS logout/reboot remains outstanding.
+pilot has since passed, including native desktop MCP reads. A full client
+quit/reopen and normal OS logout/reboot remain outstanding.
 
 ## Peer MCP bug audit — 2026-10-15
 
@@ -172,14 +193,16 @@ Three fresh-context advisors inspected actual source/results independently:
 - First-time operator: the pilot flow is concrete; generated config lost a custom
   data directory. The override is now retained and verified by a CLI regression.
 
-Accepted: fix the demonstrated gaps, document read-only/batch behavior, keep this
-unreleased until review, and stop broad feature expansion. Deferred account-wide
-search/thread reconstruction because they do not replace the missing live pilot.
+Accepted at that review: fix the demonstrated gaps, document read-only/batch
+behavior, keep the changes unreleased until review, and stop broad feature
+expansion. Deferred account-wide search/thread reconstruction because they did
+not replace the missing live pilot.
 Retained deployment-platform instructions; the expanded CI matrix verifies the
 supported targets without changing the development workstation.
 
-Next testable user outcome: after reviewing and installing the intended commit,
-one authorized employee connects through the private local form and actual MCP
+The next testable user outcome at that review was: after reviewing and installing
+the intended commit, one authorized employee connects through the private local form and actual MCP
 calls confirm read-only access, folder listing, an old message and its attachment.
-No SMTP send or mailbox mutation is part of that pilot. Next independent council
-is due after another 30 minutes of active work (approximately 00:41 Warsaw time).
+No SMTP send or mailbox mutation was part of that pilot. The next independent
+council was due after another 30 minutes of active work (approximately 00:41
+Warsaw time); the subsequent council is recorded above.

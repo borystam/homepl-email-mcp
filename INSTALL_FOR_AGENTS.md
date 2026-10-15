@@ -2,14 +2,13 @@
 
 Use this runbook when the user requests installation of this connector. It prepares a local mailbox connection for that user's agent; it does not authorize sending mail, deleting content, or accessing unrelated accounts. The user's installation request authorizes the necessary download, local dependency installation, client configuration and stated read verification. Do not insert an additional approval gate for those steps.
 
-Target release: **v0.1.0** from **https://github.com/borystam/homepl-email-mcp**. Read the release's README for capabilities and limits. This release has not yet been tested against a live home.pl mailbox.
+Target release: **v0.2.0** from **https://github.com/borystam/homepl-email-mcp**. Read that exact release's README for capabilities and limits. One authorized live Mac pilot verified IMAP/SMTP, Keychain, actual MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. Native desktop MCP calls also succeeded. A full app quit/reopen and OS logout/reboot remain unverified; perform the checks below on the employee's installation.
 
-## Development-branch additions
+## v0.2.0 modes and result handling
 
-The instructions below pin released v0.1.0. The current hardening branch is not
-part of that tag. When explicitly installing a reviewed development commit,
-`serve --read-only` removes all mutation tools, and `config --read-only` generates
-that mode. Verify `mail_accounts.access` and actual tool discovery after reload.
+The instructions below pin v0.2.0. `serve --read-only` removes all mutation tools,
+and `config --read-only` generates that mode. Verify `mail_accounts.access` and
+actual tool discovery after reload.
 Use `mail_get_messages` for up to ten exact references; it returns metadata only
 unless bodies are requested. Large results use `completeResultFile` or batch
 `fullResultFile`; inspect the referenced private JSON rather than assuming fields
@@ -35,7 +34,7 @@ Choose a persistent per-user directory. On Windows, the suggested directory is `
 ```powershell
 $homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
 New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.1.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
+git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
 Set-Location $homeplRepo
 npm.cmd ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -48,7 +47,7 @@ On macOS, use Terminal:
 ```sh
 homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
 mkdir -p "$(dirname "$homeplRepo")"
-git clone --branch v0.1.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
+git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
 cd "$homeplRepo"
 npm ci --omit=dev --ignore-scripts
 node src/cli.js doctor
