@@ -27,6 +27,16 @@ installations to the latest stable release; historical tags remain unchanged.
 
 This patch release also includes the SMTP fixes and verification below.
 
+Publication confirmed: [v0.3.1](https://github.com/borystam/homepl-email-mcp/releases/tag/v0.3.1)
+is GitHub's latest stable release, targeting
+`b45aeb03cec9609213c46e588d1a466265c9de6a`. All ten CI jobs passed on that
+published commit. A fresh public lookup, Git clone and named source ZIP agreed
+on commit/package version; the public checksum matched and a clean production
+install started real stdio processes reporting version 0.3.1 with 20/10 tools.
+Temporary empty account stores were used; no mailbox or saved credential was
+accessed. All four older release descriptions have superseded/latest notices;
+their original targets and assets were preserved.
+
 ## Independent council — 2026-10-15 15:17 Europe/Warsaw
 
 Three fresh independent advisors reviewed the actual changes as a pragmatic
@@ -39,6 +49,12 @@ and test the public download. Accepted: keep source-version status distinct from
 confirmed publication and fix the moved comparison link. No conflicting advice
 required rejection. Next testable outcome: public latest resolves v0.3.1 and a
 fresh verified artifact reports that version over stdio without mailbox access.
+
+Follow-up check at 16:05 Europe/Warsaw: three fresh advisors in the same distinct
+personas found no new blocker and recommended stopping further prose/audits and
+finishing publication. Accepted; no advice was rejected. The public installation
+outcome above now completes that testable next step. No further feature work is
+part of this release.
 
 ## SMTP outcome and message identity fixes — 2026-10-15
 
