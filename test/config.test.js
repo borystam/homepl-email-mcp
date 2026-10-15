@@ -76,6 +76,7 @@ test('locked credential store fails closed with no disk password fallback or lea
     async getPassword() { throw new Error('native private-password AUTH transcript'); },
   });
   await assert.rejects(store.saveAccount(account(), 'private-password'), error => {
+    assert.equal(error.code, 'CONFIG_CREDENTIAL_READ_FAILED');
     assert.match(error.message, /credential store/);
     assert.doesNotMatch(error.message, /private-password|transcript/);
     return true;
@@ -155,6 +156,7 @@ test('credential writes that change a secret and then fail restore the previous 
     if (password === 'new-password') throw new Error('native secret new-password AUTH transcript');
   };
   await assert.rejects(store.saveAccount({ ...account(), displayName: 'Should not persist' }, 'new-password'), error => {
+    assert.equal(error.code, 'CONFIG_CREDENTIAL_WRITE_FAILED');
     assert.doesNotMatch(error.message, /new-password|AUTH|transcript/);
     return true;
   });
@@ -170,6 +172,7 @@ test('credential deletion that takes effect and then fails restores the account 
     throw new Error('native private-password deletion transcript');
   };
   await assert.rejects(store.removeAccount('test-account'), error => {
+    assert.equal(error.code, 'CONFIG_CREDENTIAL_DELETE_FAILED');
     assert.doesNotMatch(error.message, /private-password|transcript/);
     return true;
   });
@@ -208,7 +211,7 @@ test('a failed metadata write removes a new credential and temporary files', asy
     // Force the final file replacement to fail after the keyring write.
     await mkdir(join(directory, 'accounts.json'));
   };
-  await assert.rejects(store.saveAccount(account(), 'private-password'), /could not be saved/);
+  await assert.rejects(store.saveAccount(account(), 'private-password'), { code: 'CONFIG_SETTINGS_WRITE_FAILED' });
   assert.equal(secrets.size, 0);
   assert.deepEqual(await readdir(directory), ['accounts.json']);
 });
@@ -233,6 +236,137 @@ test('an existing lock is never automatically treated as stale or removed', asyn
   const sentinel = '{"pid":99999999,"createdAt":"2000-01-01T00:00:00.000Z"}\n';
   await writeFile(join(directory, '.accounts.lock'), sentinel, { mode: 0o600 });
   await assert.rejects(store.saveAccount(account(), 'private-password'), { code: 'CONFIG_BUSY' });
+  await assert.rejects(store.checkStorage(), { code: 'CONFIG_BUSY' });
   assert.equal(await readFile(join(directory, '.accounts.lock'), 'utf8'), sentinel);
   assert.equal(secrets.size, 0);
+});
+
+test('storage preflight checks the actual directory and synthetic credential without modifying accounts', async t => {
+  const { store, keyring, secrets, directory } = await fixture(t);
+  await store.saveAccount(account(), 'real-test-account-password');
+  const before = await readFile(join(directory, 'accounts.json'), 'utf8');
+  const ids = new Set();
+  let testPassword;
+  const setPassword = keyring.setPassword;
+  keyring.setPassword = async (id, password) => {
+    assert.match(id, /^storage-check-[0-9a-f-]{36}$/);
+    ids.add(id);
+    testPassword = password;
+    // The synthetic credential must never be written into any probe file.
+    for (const name of await readdir(directory)) {
+      assert.ok(!(await readFile(join(directory, name), 'utf8')).includes(password));
+    }
+    await setPassword(id, password);
+  };
+  assert.deepEqual(await store.checkStorage(), { directory: 'writable', credentials: 'available' });
+  assert.equal(ids.size, 1);
+  assert.ok(testPassword.length >= 32);
+  assert.equal(await readFile(join(directory, 'accounts.json'), 'utf8'), before);
+  assert.deepEqual([...secrets], [['test-account', 'real-test-account-password']]);
+  assert.deepEqual(await readdir(directory), ['accounts.json']);
+});
+
+test('storage preflight reports a blocked data directory before accessing credentials', async t => {
+  const { directory } = await fixture(t);
+  const blocked = join(directory, 'not-a-directory');
+  await writeFile(blocked, 'private path material');
+  const store = createConfigStore({ directory: blocked, keyring: {
+    async getPassword() { assert.fail('blocked directory accessed keyring'); },
+  } });
+  await assert.rejects(store.checkStorage(), error => {
+    assert.equal(error.code, 'CONFIG_DIRECTORY_UNWRITABLE');
+    assert.doesNotMatch(error.message, /not-a-directory|private path material|ENOENT|EEXIST/);
+    return true;
+  });
+  assert.equal(await readFile(blocked, 'utf8'), 'private path material');
+});
+
+test('storage preflight distinguishes binding initialization and credential read failures without native details', async t => {
+  for (const [nativeCode, expectedCode] of [
+    ['CONFIG_CREDENTIAL_BINDING_FAILED', 'CONFIG_CREDENTIAL_BINDING_FAILED'],
+    ['GenericFailure', 'CONFIG_CREDENTIAL_READ_FAILED'],
+  ]) {
+    const { store, directory } = await fixture(t, {
+      async getPassword() { throw Object.assign(new Error('native private-password transcript'), { code: nativeCode }); },
+      async setPassword() { assert.fail('failed read attempted a write'); },
+      async deletePassword() { assert.fail('failed read attempted a delete'); },
+    });
+    await assert.rejects(store.checkStorage(), error => {
+      assert.equal(error.code, expectedCode);
+      assert.doesNotMatch(error.message, /private-password|transcript|GenericFailure/);
+      return true;
+    });
+    assert.deepEqual(await readdir(directory), []);
+  }
+});
+
+test('storage preflight cleans up a credential write that takes effect and then fails', async t => {
+  const { store, keyring, secrets, directory } = await fixture(t);
+  keyring.setPassword = async (id, password) => {
+    secrets.set(id, password);
+    throw new Error('private native write transcript');
+  };
+  await assert.rejects(store.checkStorage(), { code: 'CONFIG_CREDENTIAL_WRITE_FAILED' });
+  assert.equal(secrets.size, 0);
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('storage preflight fails if credential readback does not match and still removes its test entry', async t => {
+  const { store, keyring, secrets, directory } = await fixture(t);
+  const getPassword = keyring.getPassword;
+  keyring.getPassword = async id => secrets.has(id) ? 'wrong-readback-value' : getPassword(id);
+  await assert.rejects(store.checkStorage(), { code: 'CONFIG_CREDENTIAL_READ_FAILED' });
+  assert.equal(secrets.size, 0);
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('storage preflight never overwrites or deletes a colliding credential', async t => {
+  const { store, directory } = await fixture(t, {
+    async getPassword() { return 'existing-credential'; },
+    async setPassword() { assert.fail('preflight overwrote an existing credential'); },
+    async deletePassword() { assert.fail('preflight deleted an existing credential'); },
+  });
+  await assert.rejects(store.checkStorage(), { code: 'CONFIG_CREDENTIAL_READ_FAILED' });
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('storage preflight reports failed credential cleanup and removes its temporary files', async t => {
+  const { store, keyring, secrets, directory } = await fixture(t);
+  keyring.deletePassword = async () => { throw new Error('native cleanup private-password'); };
+  await assert.rejects(store.checkStorage(), error => {
+    assert.equal(error.code, 'CONFIG_CREDENTIAL_DELETE_FAILED');
+    assert.doesNotMatch(error.message, /private-password|native cleanup/);
+    return true;
+  });
+  assert.equal(secrets.size, 1);
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('storage preflight detects a deletion reported successful while a test credential remains', async t => {
+  const { store, keyring, secrets, directory } = await fixture(t);
+  keyring.deletePassword = async () => true;
+  await assert.rejects(store.checkStorage(), { code: 'CONFIG_CREDENTIAL_DELETE_FAILED' });
+  assert.equal(secrets.size, 1);
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('storage preflight flags incomplete recovery when both an operation and cleanup fail', async t => {
+  const { store, keyring, directory } = await fixture(t);
+  keyring.setPassword = async () => { throw new Error('native credential write failed'); };
+  keyring.deletePassword = async () => { throw new Error('native credential cleanup failed'); };
+  await assert.rejects(store.checkStorage(), { code: 'CONFIG_STORAGE_CLEANUP_FAILED' });
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('unreadable settings report a fixed code without leaking corrupt file contents', async t => {
+  const { store, directory } = await fixture(t);
+  await writeFile(join(directory, 'accounts.json'), 'private-mailbox-data invalid JSON');
+  await assert.rejects(store.listAccounts(), error => {
+    assert.equal(error.code, 'CONFIG_SETTINGS_READ_FAILED');
+    assert.doesNotMatch(error.message, /private-mailbox-data|invalid JSON|SyntaxError/);
+    return true;
+  });
+  await assert.rejects(store.checkStorage(), { code: 'CONFIG_SETTINGS_READ_FAILED' });
+  assert.deepEqual(await readdir(directory), ['accounts.json']);
+  assert.equal(await readFile(join(directory, 'accounts.json'), 'utf8'), 'private-mailbox-data invalid JSON');
 });

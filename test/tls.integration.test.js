@@ -9,10 +9,12 @@ import hoodiecrow from 'hoodiecrow-imap';
 import { SMTPServer } from 'smtp-server';
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
+import tls from 'node:tls';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createContext } from '../src/context.js';
 import { makeServer } from '../src/server.js';
+import { verifyAccount } from '../src/setup.js';
 
 const run = promisify(execFile);
 const email = 'tls-fixture@example.invalid';
@@ -73,18 +75,22 @@ async function environment(t) {
   await new Promise((resolve, reject) => { smtp.server.once('error', reject); smtp.listen(0, '127.0.0.1', resolve); });
   const account = { id: 'tls', email, imap: { host: 'fixture.invalid', port: 993 }, smtp: { host: 'fixture.invalid', port: 465 }, folders: { sent: 'Sent' } };
   let contextNumber = 0;
-  const context = ({ trusted = true, credential = password, servername = 'localhost' } = {}) => createContext({
-    dataDir: join(root, `context-${++contextNumber}`), getAccount: async id => { assert.equal(id, 'tls'); return account; }, getPassword: async () => credential,
+  const factories = ({ trusted = true, servername = 'localhost', smtpServername = servername } = {}) => ({
     imapFactory: settings => {
       assert.equal(settings.secure, true); assert.equal(settings.tls.rejectUnauthorized, true);
-      return new ImapFlow({ ...settings, host: '127.0.0.1', port: imap.server.address().port, disableAutoEnable: true, connectionTimeout: 3000, greetingTimeout: 3000, socketTimeout: 3000, tls: { ...settings.tls, servername, ...(trusted ? { ca: cert } : {}) } });
+      return new ImapFlow({ ...settings, host: '127.0.0.1', port: imap.server.address().port, disableAutoEnable: true, connectionTimeout: 3000, greetingTimeout: 3000, socketTimeout: 3000, tls: { ...settings.tls, servername, ...(trusted === true ? { ca: cert } : {}) } });
     },
     smtpFactory: settings => {
       assert.equal(settings.secure, true); assert.equal(settings.tls.rejectUnauthorized, true);
-      return nodemailer.createTransport({ ...settings, host: '127.0.0.1', port: smtp.server.address().port, connectionTimeout: 3000, greetingTimeout: 3000, socketTimeout: 3000, tls: { ...settings.tls, servername, ...(trusted ? { ca: cert } : {}) } });
+      return nodemailer.createTransport({ ...settings, host: '127.0.0.1', port: smtp.server.address().port, connectionTimeout: 3000, greetingTimeout: 3000, socketTimeout: 3000, tls: { ...settings.tls, servername: smtpServername, ...(trusted === true ? { ca: cert } : {}) } });
     },
   });
-  return { context, account, counters: () => ({ smtpAuthentications, smtpDataCalls }) };
+  const context = (options = {}) => createContext({
+    dataDir: join(root, `context-${++contextNumber}`), getAccount: async id => { assert.equal(id, 'tls'); return account; },
+    getPassword: async () => options.credential ?? password, ...factories(options),
+  });
+  return { context, account, cert: cert.toString(), verify: options => verifyAccount(account, password, factories(options)),
+    counters: () => ({ smtpAuthentications, smtpDataCalls }) };
 }
 
 test('implicit TLS mail transport validates certificates and authentication on loopback', { timeout: 30000 }, async t => {
@@ -121,6 +127,23 @@ test('implicit TLS mail transport validates certificates and authentication on l
     const ctx = await fixture.context({ servername: 'wrong-host.example.invalid' });
     await assert.rejects(ctx.withImap('tls', null, {}, client => client.list()), /altname|hostname|certificate/i);
     await assert.rejects(ctx.withSmtp('tls', transport => transport.verify()), /altname|hostname|certificate/i);
+  });
+
+  await t.test('OS-trusted scanning certificate works in setup and later mail use without CA overrides', async t => {
+    const original = tls.getCACertificates.bind(tls);
+    t.mock.method(tls, 'getCACertificates', type => type === 'system' ? [fixture.cert] : original(type));
+    const ctx = await fixture.context({ trusted: 'system' });
+    assert.ok((await ctx.withImap('tls', null, {}, client => client.list())).some(folder => folder.path === 'INBOX'));
+    assert.equal(await ctx.withSmtp('tls', transport => transport.verify()), true);
+    assert.equal((await fixture.verify({ trusted: 'system' })).sent, 'Sent');
+    await assert.rejects(fixture.verify({ trusted: 'system', servername: 'wrong.example.invalid' }), { code: 'IMAP_TLS' });
+    const before = fixture.counters().smtpAuthentications;
+    await assert.rejects(fixture.verify({ trusted: 'system', smtpServername: 'wrong.example.invalid' }), { code: 'SMTP_TLS' });
+    assert.equal(fixture.counters().smtpAuthentications, before);
+  });
+
+  await t.test('setup rejects an untrusted scanning certificate', async () => {
+    await assert.rejects(fixture.verify({ trusted: false }), { code: 'IMAP_TLS' });
   });
 
   await t.test('MCP responses hide credentials and private provider authentication diagnostics', async t => {

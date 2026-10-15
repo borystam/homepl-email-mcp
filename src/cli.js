@@ -2,7 +2,8 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { listAccounts, removeAccount, dataDir, configErrorDescriptions } from './config.js';
+import { listAccounts, removeAccount, dataDir, checkStorage, configErrorDescriptions } from './config.js';
+import { getMailTlsOptions, tlsErrorDescriptions } from './tls.js';
 
 const command = process.argv[2] ?? 'serve';
 const here = fileURLToPath(import.meta.url);
@@ -17,7 +18,7 @@ function openBrowser(url) {
 }
 
 async function main() {
-  if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or newer is required.');
+  const mailTls = getMailTlsOptions();
   if (command === 'serve') {
     if (process.argv.slice(3).some(arg => arg !== '--read-only')) throw new Error('Unknown serve option.');
     await (await import('./server.js')).serve({ readOnly: process.argv.includes('--read-only') });
@@ -48,10 +49,16 @@ async function main() {
     process.stdout.write(`[mcp_servers.homepl-email]\ncommand = ${JSON.stringify(process.execPath)}\nargs = ${JSON.stringify(args)}\ntool_timeout_sec = 180\n`);
     if (env) process.stdout.write(`\n[mcp_servers.homepl-email.env]\nHOME_MAIL_DATA_DIR = ${JSON.stringify(env.HOME_MAIL_DATA_DIR)}\n`);
   } else if (command === 'doctor') {
+    if (process.argv.slice(3).some(arg => !['--connect', '--storage'].includes(arg))) throw new Error('Unknown doctor option.');
     const accounts = await listAccounts();
-    const report = { node: process.version, platform: process.platform, dataDir: resolve(dataDir()), accounts: accounts.length, connected: false };
-    // Loading the native binding tests compatibility without reading credentials.
-    await import('@napi-rs/keyring');
+    const report = { node: process.version, platform: process.platform, dataDir: resolve(dataDir()), accounts: accounts.length, connected: false,
+      certificateTrust: 'node-default-and-system', trustedCaCertificates: mailTls.ca.length, tlsVerification: mailTls.rejectUnauthorized };
+    if (process.argv.includes('--storage')) report.storage = await checkStorage();
+    else {
+      // Loading alone is a compatibility check, not a writable-store check.
+      try { await import('@napi-rs/keyring'); }
+      catch { throw Object.assign(new Error(), { code: 'CONFIG_CREDENTIAL_BINDING_FAILED' }); }
+    }
     report.credentialBinding = 'loaded';
     if (process.argv.includes('--connect')) {
       const { verifyAccount } = await import('./setup.js');
@@ -61,14 +68,15 @@ async function main() {
     }
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   } else {
-    process.stdout.write('homepl-email-mcp serve [--read-only] | setup [--no-open] | accounts | config [--read-only] | doctor [--connect] | remove ACCOUNT_ID\n');
+    process.stdout.write('homepl-email-mcp serve [--read-only] | setup [--no-open] | accounts | config [--read-only] | doctor [--storage] [--connect] | remove ACCOUNT_ID\n');
     if (!['help', '--help', '-h'].includes(command)) process.exitCode = 1;
   }
 }
 
 main().catch(error => {
   // Avoid logging a provider/native exception containing secrets or private data.
-  const known = configErrorDescriptions[error?.code];
-  process.stderr.write(known ? `${error.code}: ${known}\n` : 'The command failed. Check Node.js >=22, the OS credential store, and account setup. Run "node src/cli.js help" for usage.\n');
+  const known = Object.hasOwn(configErrorDescriptions, error?.code) ? configErrorDescriptions[error.code]
+    : Object.hasOwn(tlsErrorDescriptions, error?.code) ? tlsErrorDescriptions[error.code] : undefined;
+  process.stderr.write(known ? `${error.code}: ${known}\n` : 'The command failed. Check the supported native Node.js version, OS credential store, and account setup. Run "node src/cli.js help" for usage.\n');
   process.exitCode = 1;
 });

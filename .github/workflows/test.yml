@@ -11,6 +11,8 @@ jobs:
       matrix:
         include:
           - os: windows-latest
+            node: 22.15.0
+          - os: windows-latest
             node: 22
           - os: windows-latest
             node: 24
@@ -36,7 +38,13 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Windows trusted certificates work with TLS validation
+        if: runner.os == 'Windows'
+        run: node scripts/system-ca-smoke.js
       - name: Saved credentials survive fresh processes
         if: runner.os == 'Windows' || runner.os == 'macOS'
         run: node scripts/keyring-smoke.js
+      - name: Actual data-directory and credential preflight
+        if: runner.os == 'Windows' || runner.os == 'macOS'
+        run: node src/cli.js doctor --storage
       - run: node src/cli.js doctor

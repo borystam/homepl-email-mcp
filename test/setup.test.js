@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createConfigStore } from '../src/config.js';
 import { startSetup, verifyAccount } from '../src/setup.js';
+import { getMailTlsOptions } from '../src/tls.js';
+import { configErrorDescriptions } from '../src/config.js';
 
 function request(url, { method = 'GET', headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
@@ -23,6 +25,7 @@ function request(url, { method = 'GET', headers = {}, body } = {}) {
 async function fixture(t, options = {}) {
   const calls = [];
   const setup = await startSetup({
+    checkStorage: async () => {},
     verify: async (account, password) => { calls.push({ operation: 'verify', account: structuredClone(account), password }); return { sent: 'Wysłane', drafts: 'Szkice' }; },
     saveAccount: async (account, password) => { calls.push({ operation: 'save', account: structuredClone(account), password }); },
     listAccounts: async () => [], ...options,
@@ -62,6 +65,47 @@ test('local HTTP flow verifies both protocols before saving, detects folders and
   assert.equal(completion.account.email, 'person@example.pl');
   assert.doesNotMatch(JSON.stringify(completion), /private-mailbox-password/);
   await assert.rejects(request(setup.url));
+});
+
+test('storage preflight finishes before setup opens or asks for mailbox credentials', async t => {
+  const operations = [];
+  const { submit } = await fixture(t, {
+    checkStorage: async () => { operations.push('storage'); },
+    listAccounts: async () => { operations.push('accounts'); return []; },
+    verify: async () => { operations.push('verify'); },
+    saveAccount: async () => { operations.push('save'); },
+  });
+  assert.deepEqual(operations, ['storage', 'accounts']);
+  assert.equal((await submit()).status, 200);
+  assert.deepEqual(operations, ['storage', 'accounts', 'verify', 'accounts', 'save']);
+});
+
+test('failed storage preflight prevents setup and authentication entirely', async () => {
+  const failure = Object.assign(new Error('fixed synthetic storage failure'), { code: 'CONFIG_CREDENTIAL_WRITE_FAILED' });
+  await assert.rejects(startSetup({
+    checkStorage: async () => { throw failure; },
+    listAccounts: async () => assert.fail('accounts accessed after failed preflight'),
+    verify: async () => assert.fail('mailbox authentication attempted after failed preflight'),
+  }), error => error === failure);
+});
+
+test('save errors expose only allowlisted storage stage codes and retain a safe fallback', async t => {
+  let code;
+  const { submit } = await fixture(t, { saveAccount: async () => {
+    throw Object.assign(new Error('PRIVATE_NATIVE_DETAILS private-mailbox-password'), { code });
+  } });
+  for (code of ['CONFIG_DIRECTORY_UNWRITABLE', 'CONFIG_CREDENTIAL_BINDING_FAILED', 'CONFIG_CREDENTIAL_READ_FAILED', 'CONFIG_CREDENTIAL_WRITE_FAILED', 'CONFIG_CREDENTIAL_DELETE_FAILED', 'CONFIG_SETTINGS_WRITE_FAILED', 'CONFIG_SETTINGS_READ_FAILED']) {
+    const result = await submit();
+    assert.equal(result.status, 500);
+    assert.ok(result.text.includes(`[${code}]`));
+    assert.ok(result.text.includes(configErrorDescriptions[code]));
+    assert.doesNotMatch(result.text, /PRIVATE_NATIVE_DETAILS|private-mailbox-password/);
+  }
+  for (code of ['PRIVATE_CODE', 'toString', '__proto__']) {
+    const result = await submit();
+    assert.match(result.text, /account could not be saved/);
+    assert.doesNotMatch(result.text, /PRIVATE_CODE|PRIVATE_NATIVE_DETAILS|private-mailbox-password|\[toString\]|\[__proto__\]/);
+  }
 });
 
 test('setup rejects cross-origin posts, missing origin/token, guessed routes, and DNS-rebinding Host', async t => {
@@ -124,7 +168,7 @@ test('verification diagnostics identify the failing protocol and stage without e
     const checkSettings = (settings, port) => {
       assert.equal(settings.port, port);
       assert.equal(settings.secure, true);
-      assert.deepEqual(settings.tls, { rejectUnauthorized: true, minVersion: 'TLSv1.2' });
+      assert.deepEqual(settings.tls, getMailTlsOptions());
       assert.equal(settings.logger, false);
     };
     const transports = {
@@ -207,7 +251,7 @@ test('setup expires and cancellation resolves without saving', async t => {
   assert.deepEqual(await setup.completion, { status: 'expired' });
   assert.equal(calls.length, 0);
   await assert.rejects(request(setup.url));
-  const other = await startSetup({ listAccounts: async () => [] });
+  const other = await startSetup({ checkStorage: async () => {}, listAccounts: async () => [] });
   other.close();
   assert.deepEqual(await other.completion, { status: 'cancelled' });
 });

@@ -1,10 +1,39 @@
 # Release and validation status
 
-Version: **v0.2.0**. The installation runbook and employee prompt pin this version
+Version: **v0.2.1**. The installation runbook and employee prompt pin this version
 and include the hardening described below. See GitHub Releases for the published
 tag and downloadable release assets; v0.1.0 remains an older initial release.
 One authorized home.pl mailbox has passed the live Mac pilot. Full app
 quit/reopen and OS logout/reboot checks remain unverified.
+
+## v0.2.1 OS certificate trust and agent-owned installation — 2026-10-15
+
+An employee Windows installation reported TLS interception by a locally trusted
+mail-scanning certificate. Setup and runtime IMAP/SMTP now share a strict TLS
+configuration that adds OS-trusted roots to Node's existing default/additional
+roots. No certificate export, antivirus change, global trust mutation or disabled
+verification is required. Native Node 22.15+ on 22.x or 24+ is required.
+
+A subsequent save failure had only a generic storage message; its exact cause on
+that PC is not yet established. Setup now probes its real data directory and a
+unique synthetic keyring entry before opening the password form. Fixed storage
+codes distinguish binding, read, write, metadata and cleanup failures without
+revealing raw errors. There is no plaintext credential fallback.
+
+The installing agent's runbook explicitly owns prerequisite installation,
+preflight, ordinary local repair, saved-login reuse, MCP client registration and
+real-tool verification. The employee enters mailbox details privately; diagnostics
+are performed by the agent. Actual security/organization blocks remain blocks.
+
+Synthetic tests cover combined CA sources and all four mail transport paths,
+untrusted/hostname rejection, pre-form storage order, safe storage-stage messages,
+and cleanup/rollback. Windows CI additionally installs and removes one unique
+synthetic current-user root, proving fresh-process native trust and rejection
+after removal; no user machine trust store is modified by that smoke script.
+The independent patch reviewer found one doctor binding-message gap, which was
+fixed, and no remaining blocking issues. Local full-suite and platform CI results
+are recorded below once complete. The affected employee PC still needs an agent
+upgrade and a successful storage/MCP verification before it is called working.
 
 ## v0.2.0 publication readiness — 2026-10-15
 

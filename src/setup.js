@@ -2,7 +2,8 @@ import http from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
-import { saveAccount as persistAccount, listAccounts as readAccounts, validateAccount, configErrorDescriptions } from './config.js';
+import { saveAccount as persistAccount, listAccounts as readAccounts, checkStorage as checkLocalStorage, validateAccount, configErrorDescriptions } from './config.js';
+import { getMailTlsOptions } from './tls.js';
 
 const MAX_BODY = 16 * 1024;
 const VERIFY_ERROR = 'Connection could not be verified. Check the mailbox email, password, and exact server hostname. External mail-client access must be enabled in home.pl.';
@@ -60,7 +61,7 @@ export async function verifyAccount(account, password, {
   const imap = imapFactory({
     host: account.imap.host, port: 993, secure: true,
     auth: { user: account.email, pass: password },
-    tls: { rejectUnauthorized: true, minVersion: 'TLSv1.2' },
+    tls: getMailTlsOptions(),
     logger: false, emitLogs: false, connectionTimeout: 15000,
     greetingTimeout: 15000, socketTimeout: 30000,
   });
@@ -83,7 +84,7 @@ export async function verifyAccount(account, password, {
     host: account.smtp.host, port: 465, secure: true,
     forceAuth: true,
     auth: { user: account.email, pass: password },
-    tls: { rejectUnauthorized: true, minVersion: 'TLSv1.2' },
+    tls: getMailTlsOptions(),
     logger: false, debug: false, connectionTimeout: 15000,
     greetingTimeout: 15000, socketTimeout: 30000,
   });
@@ -139,6 +140,11 @@ export async function startSetup(options = {}) {
   const verify = options.verify || verifyAccount;
   const save = options.saveAccount || persistAccount;
   const list = options.listAccounts || readAccounts;
+  // Detect local storage failures before asking the employee for a password.
+  // The installing agent receives a fixed error code and can repair the local
+  // execution environment without exposing any mailbox credentials.
+  await (options.checkStorage ?? checkLocalStorage)();
+  await list();
   const capability = randomBytes(32).toString('base64url');
   const csrf = randomBytes(32).toString('base64url');
   const path = `/setup/${capability}`;
@@ -231,15 +237,16 @@ export async function startSetup(options = {}) {
     } catch (error) {
       busy = false; password = undefined;
       if (['CONFIG_RECOVERY_REQUIRED', 'CONFIG_LOCK_RELEASE_FAILED'].includes(error.code)) {
-        const message = configErrorDescriptions[error.code];
+        const message = `[${error.code}] ${configErrorDescriptions[error.code]}`;
         if (finished) closeResult = { status: 'failed', message };
         respond(response, 500, { error: message }); return;
       }
       if (finished) { respond(response, 410, { plain: 'Setup is closed. Start setup again.' }); return; }
       if (error.code === 'CONFIG_BUSY') {
-        respond(response, 409, { error: configErrorDescriptions.CONFIG_BUSY }); return;
+        respond(response, 409, { error: `[CONFIG_BUSY] ${configErrorDescriptions.CONFIG_BUSY}` }); return;
       }
-      respond(response, 500, { error: SAVE_ERROR }); return;
+      const message = Object.hasOwn(configErrorDescriptions, error?.code) ? `[${error.code}] ${configErrorDescriptions[error.code]}` : SAVE_ERROR;
+      respond(response, 500, { error: message }); return;
     } finally {
       password = undefined;
       saving = false;

@@ -6,7 +6,19 @@ Windows and macOS (Apple silicon and Intel) use the same connector and tools.
 See the [Windows installation](#manual-installation-on-windows) or
 [Mac installation](#manual-installation-on-macos).
 
-This is an independent community project, not an official home.pl product. Version **0.2.0** includes the setup and reliability fixes described below. One authorized live Mac pilot verified IMAP/SMTP, macOS Keychain, discovery of all 18 MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. The desktop app also loaded the native tools and successfully called `mail_accounts` and `mail_folders`. A full app quit/reopen and OS logout/reboot remain unverified. Pilot the intended version with one employee before repeating installation for the team.
+This is an independent community project, not an official home.pl product. Version **0.2.1** includes the setup and reliability fixes described below. One authorized live Mac pilot verified IMAP/SMTP, macOS Keychain, discovery of all 18 MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. The desktop app also loaded the native tools and successfully called `mail_accounts` and `mail_folders`. A full app quit/reopen and OS logout/reboot remain unverified. Pilot the intended version with one employee before repeating installation for the team.
+
+## Changes in v0.2.1
+
+- Mail connections automatically use OS-trusted roots alongside Node's existing
+  roots. This supports installed G DATA or company mail-inspection certificates
+  without exporting certificates or disabling TLS/hostname validation.
+- Setup checks the actual local data directory and a temporary OS-keyring entry
+  before opening the password form. Storage failures have fixed, safe codes so
+  the installing agent can diagnose them without reading the mailbox password.
+- The agent installation runbook covers prerequisites, storage recovery, client
+  integration and verification. Use `doctor --storage` for a credential-free
+  storage check. Node.js 22.15+ (22.x) or 24+ is required.
 
 ## Changes in v0.2.0
 
@@ -42,7 +54,7 @@ For a read-only installation, register the server with `serve --read-only`
 
 Paste this into **an agent with access to the employee's computer and support for local stdio MCP servers**:
 
-> Install https://github.com/borystam/homepl-email-mcp at release v0.2.0 on this computer. Read and follow INSTALL_FOR_AGENTS.md from that exact release. Install the required local dependencies, configure the connector in this agent, and guide me through connecting my home.pl mailbox. I will enter my mailbox password myself in the private local setup form; never ask me to put it in chat or screenshots. After connecting, verify the actual MCP tools, list my folders, and inspect metadata and headers for up to three messages. Do not send, move, change or delete mail as part of setup. Tell me the installed version and commit, which live checks succeeded, and any remaining restart or reboot check.
+> Install or update https://github.com/borystam/homepl-email-mcp to release v0.2.1 on this computer. Read and follow INSTALL_FOR_AGENTS.md from that exact release. Handle missing prerequisites, dependency installation, automatic certificate trust, storage checks and repair, and MCP integration in this agent. Perform diagnostics yourself; do not ask me to run commands. I will enter my mailbox details myself in the private local setup form; never ask for my password in chat or screenshots. Verify actual MCP tools, folders, and metadata/headers for up to three messages without sending or changing mail. Reuse any saved login. Report the installed version and actual verification results, including anything blocked by a real OS or organization policy.
 
 The employee needs their **full mailbox email address, mailbox password and exact mail server hostname**. The home.pl hosting administrator password is not the mailbox password.
 
@@ -71,14 +83,14 @@ Shared-namespace coverage remains unresolved; it has not been tested on home.pl.
 
 ## Manual installation on Windows
 
-Use native Windows Node.js **22 or newer**, npm, Git, and a local MCP-capable agent. Run the connector as the employee's normal desktop user so it can use that user's credential store. An administrator or a different OS account would have different settings and credentials.
+Use native Windows Node.js **22.15+ on the 22.x line, or 24+**, npm, Git, and a local MCP-capable agent. Run the connector as the employee's normal desktop user so it can use that user's credential store. An administrator or a different OS account would have different settings and credentials.
 
 In PowerShell, choose a persistent installation directory:
 
 ```powershell
 $homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
 New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
+git clone --branch v0.2.1 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
 Set-Location $homeplRepo
 npm.cmd ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -108,14 +120,14 @@ Restart or reload the client as its MCP configuration requires. A configuration 
 
 ## Manual installation on macOS
 
-Use Node.js **22 or newer** for the Mac's native architecture, npm, Git, and a
+Use Node.js **22.15+ on the 22.x line, or 24+** for the Mac's native architecture, npm, Git, and a
 local MCP-capable agent. Run as the employee's usual desktop user, without `sudo`.
 In Terminal, choose a persistent directory (keep it after setup):
 
 ```sh
 homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
 mkdir -p "$(dirname "$homeplRepo")"
-git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
+git clone --branch v0.2.1 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
 cd "$homeplRepo"
 npm ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -208,8 +220,10 @@ Removal deletes the saved mailbox credential and account entry. Existing downloa
 | Symptom | Check |
 | --- | --- |
 | Setup cannot verify login | Full mailbox address, mailbox password, exact IMAP/SMTP hostnames, external-client access, and outbound ports 993/465. Keep TLS verification enabled. |
+| G DATA/company inspection certificate | v0.2.1 automatically includes the OS-trusted CA store for setup and later email access. The certificate must already be trusted by the logged-in user/OS. Restart the setup/MCP process after OS trust changes. Never disable certificate validation or trust an arbitrary certificate downloaded from an error. |
+| Connection works but saving fails | The agent runs `node src/cli.js doctor --storage` in the same native-user execution context as setup and the MCP. Follow the fixed `CONFIG_*` code using the installation runbook; passwords stay in the OS keyring. |
 | Credential store unavailable | Run as the same logged-in desktop user. Unlock their credential store. On Linux, check Secret Service. Do not substitute plaintext password storage. |
-| `node`/`npm` not found | Install Node.js 22+ through the organization's normal software channel, then restart the terminal/client so its PATH updates. On PowerShell, use `npm.cmd`; use `codex.cmd` if an npm-installed `codex.ps1` is blocked. |
+| `node`/`npm` not found | Install a supported native Node.js LTS version (22.15+ or 24+) through the organization's normal software channel, then restart the terminal/client so its PATH updates. On PowerShell, use `npm.cmd`; use `codex.cmd` if an npm-installed `codex.ps1` is blocked. |
 | Server configured but tools absent | Check absolute Node/CLI paths, run `node src/cli.js doctor`, then reload the MCP client. Check workspace restrictions and whether this chat actually runs with local MCP access. |
 | Tools exist but account is missing | Run setup as the same OS user and with the same `HOME_MAIL_DATA_DIR` as the MCP process. |
 | A search page is empty but has a cursor | Continue the cursor. Large gaps between UIDs can require another bounded scan. Search every relevant folder before claiming completeness. |
