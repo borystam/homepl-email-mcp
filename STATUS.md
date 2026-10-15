@@ -1,10 +1,44 @@
 # Release and validation status
 
-Version: **v0.3.0**. The installation runbook and employee prompt pin this version
-and include the hardening described below. See GitHub Releases for the published
-tag and downloadable release assets; v0.1.0 remains an older initial release.
+Source version: **v0.3.1**. Installation and upgrade instructions resolve the current
+stable GitHub release at installation time, then pin that exact tag and full
+source commit. See [latest stable release](https://github.com/borystam/homepl-email-mcp/releases/latest)
+for the authoritative published version and assets; a source version alone is
+not publication confirmation. Sections below are historical validation
+records, not instructions to choose an older release.
 One authorized home.pl mailbox has passed the live Mac pilot. Full app
 quit/reopen and OS logout/reboot checks remain unverified.
+
+## Current-release installation and upgrade guidance — 2026-10-15
+
+README, AGENTS and the canonical installation runbook no longer embed an old
+version in the employee prompt or clone commands. The runbook resolves GitHub's
+latest stable release once and checks its full source SHA and package version
+before dependency installation. Resolution/provenance failures stop explicitly;
+there is no fallback to an old ZIP, cache or main. Explicit user pins remain
+intentional exceptions.
+
+Upgrade instructions preserve the same account store, OS user, custom data path,
+read-only mode and existing MCP entry. All onboarding status results expose the
+connector version loaded by the actual MCP process, so a new checkout cannot be
+mistaken for a refreshed desktop connection. Historical provider research is
+separate from employee installation. Superseded release descriptions point new
+installations to the latest stable release; historical tags remain unchanged.
+
+This patch release also includes the SMTP fixes and verification below.
+
+## Independent council — 2026-10-15 15:17 Europe/Warsaw
+
+Three fresh independent advisors reviewed the actual changes as a pragmatic
+product owner, skeptical reliability engineer and first-time installing operator.
+They found the latest-release resolver and loaded-version check useful and no
+runtime blocker; the reliability advisor independently passed 18 focused tests.
+Accepted: stop expanding documentation/features and repeating local audits;
+publish with the required full-SHA release metadata, redirect old release pages,
+and test the public download. Accepted: keep source-version status distinct from
+confirmed publication and fix the moved comparison link. No conflicting advice
+required rejection. Next testable outcome: public latest resolves v0.3.1 and a
+fresh verified artifact reports that version over stdio without mailbox access.
 
 ## SMTP outcome and message identity fixes — 2026-10-15
 
@@ -25,8 +59,8 @@ rejection. Neither fix permits automatic retry.
 
 All 171 synthetic tests passed, with zero skips. The Message-ID regression failed
 before the fix and now checks the exact SMTP bytes, Sent bytes, returned ID and
-persisted outcome. Independent review found no actionable issues. These local
-source fixes are not part of the published v0.3.0 release yet.
+persisted outcome. Independent review found no actionable issues. These fixes
+were not included in v0.3.0 and are included in v0.3.1 source.
 
 The updated installed connector was then started as a fresh stdio MCP process.
 It discovered all 20 tools and reused the existing OS-keyring login without a
@@ -202,8 +236,8 @@ attachment path replacement, account-update races and cancellation/rollback.
 Generated client config preserves a custom data directory and fixed error codes
 provide recovery guidance without provider diagnostics or credentials.
 
-The README contains the sourced OpenAI/Google/Anthropic connector comparison and
-explicitly distinguishes public schemas from private implementations. Account-wide
+docs/CONNECTOR_COMPARISON.md contains the sourced OpenAI/Google/Anthropic comparison
+and distinguishes public schemas from private implementations. Account-wide
 search orchestration and related-message helpers remain deferred; full retained
 history still requires every relevant folder and every cursor.
 

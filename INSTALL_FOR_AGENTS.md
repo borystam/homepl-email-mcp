@@ -2,7 +2,13 @@
 
 Use this runbook when the user requests installation of this connector. It prepares a local mailbox connection for that user's agent; it does not authorize sending mail, deleting content, or accessing unrelated accounts. The user's installation request authorizes the necessary download, local dependency installation, client configuration and stated read verification. Do not insert an additional approval gate for those steps.
 
-Target release: **v0.3.0** from **https://github.com/borystam/homepl-email-mcp**. Read that exact release's README for capabilities and limits. One authorized live Mac pilot verified IMAP/SMTP, Keychain, actual MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. Native desktop MCP calls also succeeded. A full app quit/reopen and OS logout/reboot remain unverified; perform the checks below on the employee's installation.
+Always resolve the **current stable GitHub release** from
+**https://github.com/borystam/homepl-email-mcp/releases/latest** at installation
+time, then pin its exact tag and full source commit for the whole attempt. Do not
+choose a version from a remembered prompt, an old checkout, a historical release
+page or a search snippet. An explicit user-requested version/commit is the only
+exception; report that intentional pin. Read this runbook and the README from the
+selected commit before executing its source. Section 0 supplies the resolver.
 
 ## Installation means completing the local integration
 
@@ -20,9 +26,9 @@ mailbox details, or an action outside installation scope. Do not silently bypass
 policy, disable security software, run as Administrator, weaken TLS, or save
 passwords in files to claim success. Explain a genuine block precisely.
 
-## v0.3.0 modes and result handling
+## Modes and result handling
 
-The instructions below pin v0.3.0. `serve --read-only` removes mailbox mutation tools,
+`serve --read-only` removes mailbox mutation tools,
 and `config --read-only` generates that mode. Verify `mail_accounts.access` and
 actual tool discovery after reload. Both modes include `mail_setup` (local account changes, accurately marked non-read-only) and `mail_setup_status`; these do not enable mailbox writing tools.
 Use `mail_get_messages` for up to ten exact references; it returns metadata only
@@ -30,6 +36,62 @@ unless bodies are requested. Large results use `completeResultFile` or batch
 `fullResultFile`; inspect the referenced private JSON rather than assuming fields
 were omitted by the server. Generated config retains an explicit
 `HOME_MAIL_DATA_DIR` for desktop clients that do not inherit the shell environment.
+
+## 0. Select the current stable release
+
+The public GitHub API endpoint is
+`https://api.github.com/repos/borystam/homepl-email-mcp/releases/latest`.
+It selects the repository's published latest stable release, not `main`, the
+newest branch or the highest tag found in an old clone. Our release metadata
+records the full source SHA in `target_commitish` and the release notes.
+
+Resolve it once, before selecting source. Stop on an HTTP, rate-limit, metadata
+or provenance error; retry the same official endpoint when appropriate, rather
+than silently installing an older cached copy. Do not execute a downloaded
+installer or pipe remote script text into a shell. These examples only read
+release metadata. If the user explicitly pins a release, use its
+`/releases/tags/<tag>` endpoint and verify the requested commit instead.
+
+In PowerShell, after checking native Node/npm/Git prerequisites:
+
+```powershell
+$homeplRelease = Invoke-RestMethod -Uri 'https://api.github.com/repos/borystam/homepl-email-mcp/releases/latest' -ErrorAction Stop
+if ($homeplRelease.draft -or $homeplRelease.prerelease -or $homeplRelease.tag_name -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $homeplRelease.target_commitish -notmatch '^[0-9a-fA-F]{40}$') {
+    throw 'Release metadata must identify a stable version and full source commit.'
+}
+$homeplTag = $homeplRelease.tag_name
+$homeplCommit = $homeplRelease.target_commitish
+Write-Output "$homeplTag $homeplCommit"
+```
+
+On macOS/Linux, with supported native Node already available:
+
+```sh
+homeplRelease="$(node --use-system-ca --input-type=module <<'JS'
+const response = await fetch('https://api.github.com/repos/borystam/homepl-email-mcp/releases/latest', {
+  headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'homepl-email-mcp-installer' },
+});
+if (!response.ok) throw new Error(`Release lookup failed: HTTP ${response.status}`);
+const release = await response.json();
+if (release.draft || release.prerelease || !/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(release.tag_name) || !/^[0-9a-fA-F]{40}$/.test(release.target_commitish)) {
+  throw new Error('Release metadata must identify a stable version and full source commit.');
+}
+console.log(JSON.stringify({ tag: release.tag_name, commit: release.target_commitish }));
+JS
+)" || exit 1
+homeplTag="$(node -e 'console.log(JSON.parse(process.argv[1]).tag)' "$homeplRelease")" || exit 1
+homeplCommit="$(node -e 'console.log(JSON.parse(process.argv[1]).commit)' "$homeplRelease")" || exit 1
+printf '%s %s\n' "$homeplTag" "$homeplCommit"
+```
+
+Keep these values for the steps below. Verify `git rev-parse HEAD` equals the full
+selected commit and `package.json.version` equals the selected tag without `v`
+**before npm installation or running connector source**. If using a source ZIP,
+download that release's named ZIP and SHA256SUMS asset, verify the hash and
+package version, and record the source commit from release metadata. Do not use
+an old ZIP already in Downloads or describe a ZIP without `.git` as a verified
+Git checkout. Checksums detect changed bytes; they are not an independent code
+signature.
 
 ## 1. Establish the local execution environment
 
@@ -55,9 +117,14 @@ actual MCP discovery after registration. On Windows, the suggested directory is 
 ```powershell
 $homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
 New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.3.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
-Set-Location $homeplRepo
+git clone --branch $homeplTag --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
+if ($LASTEXITCODE -ne 0) { throw 'Clone failed.' }
+Set-Location $homeplRepo -ErrorAction Stop
+$homeplHead = git rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or $homeplHead -ne $homeplCommit) { throw 'Release commit mismatch.' }
+if ((Get-Content package.json -Raw | ConvertFrom-Json).version -ne $homeplTag.Substring(1)) { throw 'Release version mismatch.' }
 npm.cmd ci --omit=dev --ignore-scripts
+if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 node src/cli.js doctor
 ```
 
@@ -68,9 +135,14 @@ On macOS, use Terminal:
 ```sh
 homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
 mkdir -p "$(dirname "$homeplRepo")"
-git clone --branch v0.3.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
-cd "$homeplRepo"
-npm ci --omit=dev --ignore-scripts
+git clone --branch "$homeplTag" --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo" || exit 1
+cd "$homeplRepo" || exit 1
+if [ "$(git rev-parse HEAD)" != "$homeplCommit" ]; then
+  echo 'Release commit mismatch.' >&2
+  exit 1
+fi
+node -e 'if (require("./package.json").version !== process.argv[1].slice(1)) process.exit(1)' "$homeplTag" || exit 1
+npm ci --omit=dev --ignore-scripts || exit 1
 node src/cli.js doctor
 ```
 
@@ -80,6 +152,42 @@ persistent directory under the user's home and the same Git/npm commands.
 The credential-store dependency ships platform binaries; `doctor` checks whether
 the native binding loads, not whether a saved password can be retrieved. A failed
 platform binding is a setup failure, not a reason to store passwords in text files.
+
+## 2a. Upgrade without resetting mailboxes
+
+1. Inspect the active desktop MCP's command and arguments. Upgrade the connector
+   **it actually launches**, not just a workspace clone. Record its current
+   version, full commit, normal OS user, data path/custom `HOME_MAIL_DATA_DIR`,
+   `serve --read-only` choice and existing entry name. Do not start an upgrade
+   while setup or a send is active; uncertain sends are never retried as part of
+   an upgrade.
+2. Check the installation's Git remote and `git status --short`. Preserve local
+   changes and unrelated files. In a clean canonical checkout, fetch the
+   selected tag (`git fetch origin tag <resolved-tag>`), verify
+   `git rev-parse 'FETCH_HEAD^{commit}'` equals the selected full SHA, then use
+   `git checkout --detach <resolved-full-SHA>` without force. A moved tag or
+   mismatch is a stop, not a reason to overwrite it. For a non-Git or locally
+   modified installation, prepare a new persistent sibling directory and update
+   only the matching MCP entry after verification.
+3. Confirm the package version, run `npm ci --omit=dev --ignore-scripts` and the
+   non-connecting `doctor` check. Preserve optional native packages. Keep the
+   same OS user, account data directory and credential service. Do not run
+   `remove`, delete accounts/downloads/outbox, copy another user's credentials,
+   or request a new password for an ordinary upgrade.
+4. Update the existing MCP entry only if its executable/source path changed.
+   Preserve custom environment settings, read-only mode and unrelated entries.
+   Reload/restart the **actual desktop MCP connection**. Reading a new version
+   from disk or testing a separate shell process does not update that connection.
+5. Call native `mail_setup_status` and compare its `connectorVersion` with the
+   selected release's package version. An absent/older value means old code is
+   still loaded: check the launch path and reload. Then call `mail_accounts` and
+   `mail_folders` with the saved account. A working saved login needs no setup
+   form. If the client's supported reload cannot be performed in this session,
+   name that remaining action and resume verification afterward.
+
+Report the selected tag/full commit, actual installation path and runtime
+version, saved-login verification, and any pending reload. Do not claim a
+completed upgrade while the desktop still runs an older connector.
 
 ## 3. Register and reload the server before mailbox login
 
@@ -131,7 +239,9 @@ Restart/reload the MCP client when required. If the active chat cannot refresh i
 ## 3a. Check the actual MCP process and recover locally
 
 After registration and reload, call **mail_setup_status through the actual MCP**.
-It reports this MCP process's OS username, platform, Node version and data path.
+It reports this MCP process's `connectorVersion`, OS username, platform, Node
+version and data path. Match `connectorVersion` to the selected release before
+continuing; an old/absent value requires checking the launch path and reloading.
 This is diagnostic information from the MCP, not a shell command or environment
 variable. A normal-looking username alone does not prove credential access.
 
@@ -187,16 +297,10 @@ specific failure. Complete the repair and retry `mail_setup` yourself:
 | `CONFIG_BUSY` | Identify the active connector setup and wait or close a setup you started. Never steal an active lock. After a crash, verify all setup processes have exited before removing only the stale `.accounts.lock`. |
 | `CONFIG_RECOVERY_REQUIRED` / `CONFIG_STORAGE_CLEANUP_FAILED` / `CONFIG_LOCK_RELEASE_FAILED` | Inspect account/test cleanup state without exposing credentials. Restore access and rerun the safe check; do not repeatedly overwrite accounts or claim completion while recovery is uncertain. |
 
-If a clean checkout already exists, deliberately update it to the pinned release
-without discarding local changes. Keep the same data directory, OS user and
-credential service. An upgrade does not require removing or reentering a saved
-mailbox credential. If a native store remains genuinely unavailable, report that
-specific block; no plaintext fallback is implemented.
-
-If the user provides a full expected release commit, compare it to
-`git rev-parse HEAD` before installing dependencies or running source. A release
-tag alone can move. Reject a mismatch and report it; do not fall back to `main`.
-Use the full tested commit printed in the release notes for reproducible handoffs.
+Follow section 2a for an existing installation. If a native store remains
+genuinely unavailable, report that specific block; no plaintext fallback is
+implemented. A release tag can move: retain the full selected commit and reject
+a mismatch, including when the user supplied that expected commit explicitly.
 
 ## 4. Connect from the conversation through MCP tools
 

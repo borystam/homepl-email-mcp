@@ -1,313 +1,163 @@
 # homepl-email-mcp
 
-Connect a local AI agent to a home.pl mailbox through encrypted IMAP and SMTP. Each employee connects through their desktop agent and a private local sign-in form; saved credentials are reused on that computer. No hosted connector or shared password database is required.
+Connect a local AI agent to a home.pl mailbox through encrypted IMAP and SMTP.
+Each employee signs in through a private local form; the computer's credential
+store saves their password. No hosted connector or shared password database is
+required. This is an independent community project, not an official home.pl product.
 
-Windows and macOS (Apple silicon and Intel) use the same connector and tools.
-See the [Windows installation](#manual-installation-on-windows) or
-[Mac installation](#manual-installation-on-macos).
+Supports **Windows and macOS**, including Apple silicon and Intel. Linux needs
+an unlocked desktop Secret Service. Use a local agent/client supporting **stdio
+MCP servers**; ordinary browser-only ChatGPT cannot install or run this connector.
 
-This is an independent community project, not an official home.pl product. Version **0.3.0** includes the setup and reliability fixes described below. One authorized live Mac pilot verified IMAP/SMTP, macOS Keychain, discovery of all 18 MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. The desktop app also loaded the native tools and successfully called `mail_accounts` and `mail_folders`. A full app quit/reopen and OS logout/reboot remain unverified. Pilot the intended version with one employee before repeating installation for the team.
+## Install or update
 
-## Changes in v0.3.0
+Paste this into the employee's local agent:
 
-- Connect from the conversation: `mail_setup` starts the private login form inside
-  the actual MCP process, and `mail_setup_status` reports completion. Passwords
-  never enter chat or tool arguments. The agent opens the form in the app browser
-  when available, or provides a local link.
-- Register/reload the MCP **before** login. Windows agent shells can run as
-  `CodexSandboxOnline`, which may lack a WinCred logon session. Shell setup is no
-  longer the employee onboarding path. The tool reports its actual host identity
-  and probes storage there; an unusable host context remains a specific block.
-- Both access modes include local account setup; mail read-only mode still omits
-  every mailbox writing tool. There are 20 tools in full mode and 10 in read-only
-  mode. An active wizard is reused and closes on MCP disconnect.
+> Install or update https://github.com/borystam/homepl-email-mcp to its latest stable GitHub release. Resolve the current release at installation time, pin its exact tag and full source commit, and follow INSTALL_FOR_AGENTS.md from that release. Handle prerequisites, diagnostics and MCP integration yourself. Preserve existing accounts, saved logins, data directory and access mode. Register and reload the desktop MCP before login; use its actual mail_setup_status and mail_setup tools. I will enter mailbox details in the private form, never in chat. Verify real tools, folders and up to three messages' metadata/headers without sending or changing mail. Report the installed version, full commit, checks performed and any remaining restart or policy block.
 
-The new Windows desktop flow still needs verification on the affected employee
-PC. Synthetic/native-store CI cannot prove that their client uses the intended
-Windows user. Check actual tools and saved-login reuse after reopening the client.
+Use the [latest stable release](https://github.com/borystam/homepl-email-mcp/releases/latest),
+not a version copied from an old conversation, release page or checkout. Resolve
+it once and keep that exact release pinned throughout the attempt. Do not fall
+back to an older release or `main` when resolution fails. An explicit user request
+for a particular version is the exception.
+[GitHub Releases](https://github.com/borystam/homepl-email-mcp/releases) holds release history.
 
-## Changes in v0.2.1
+The [installation runbook](INSTALL_FOR_AGENTS.md) is the canonical procedure:
 
-- Mail connections automatically use OS-trusted roots alongside Node's existing
-  roots. This supports installed G DATA or company mail-inspection certificates
-  without exporting certificates or disabling TLS/hostname validation.
-- Setup checks the actual local data directory and a temporary OS-keyring entry
-  before opening the password form. Storage failures have fixed, safe codes so
-  the installing agent can diagnose them without reading the mailbox password.
-- The agent installation runbook covers prerequisites, storage recovery, client
-  integration and verification. The v0.3.0 sequence supersedes shell-first setup. Use `doctor --storage` for a credential-free
-  storage check. Node.js 22.19+ (22.x) or 24.6+ is required.
+- [Select the current stable release](INSTALL_FOR_AGENTS.md#0-select-the-current-stable-release).
+- [Check prerequisites](INSTALL_FOR_AGENTS.md#1-establish-the-local-execution-environment): native Node.js 22.19+ on 22.x or 24.6+, npm and Git; install the current patched LTS.
+- [Install on Windows or macOS](INSTALL_FOR_AGENTS.md#2-install-the-pinned-release), or [upgrade without resetting mailboxes](INSTALL_FOR_AGENTS.md#2a-upgrade-without-resetting-mailboxes).
+- [Register/reload the desktop MCP](INSTALL_FOR_AGENTS.md#3-register-and-reload-the-server-before-mailbox-login), then [verify actual tools and saved-login reuse](INSTALL_FOR_AGENTS.md#5-verify-through-real-mcp-tool-calls).
 
-## Changes in v0.2.0
+The employee needs their **full mailbox address, mailbox password and exact mail
+server hostname**. The hosting administrator password is different. Find the
+hostname in **home.pl Panel → Poczta → mailbox → Serwery pocztowe**
+([home.pl instructions](https://pomoc.home.pl/baza-wiedzy/gdzie-znajde-adresy-serwerow-pocztowych-dla-skrzynki-email));
+do not guess it from the email address or use the webmail website. IMAP uses
+**993**, SMTP uses **465**, both with implicit TLS and certificate validation.
+Separate IMAP/SMTP hostnames are supported; external mail-client access must be enabled.
 
-Version **v0.2.0** includes these improvements over the initial v0.1.0 release:
-
-- Native browser setup no longer rejects its own form POST with “Forbidden”.
-  Verification errors now identify the failing IMAP/SMTP stage with fixed safe
-  messages, without exposing provider diagnostics or credentials.
-- `serve --read-only` exposes mailbox reading tools and local account onboarding. `config --read-only`
-  generates the corresponding client settings; mailbox writing tools are absent from the
-  MCP catalog. This limits this connector process, not the mailbox password's
-  permissions in other applications. Default `serve` retains full functionality.
-- `mail_get_messages` reads up to ten exact message references in one call,
-  preserving input order and a separate result/error for each. It defaults to
-  metadata and headers; request bodies explicitly.
-- Read results exceeding 64 KiB are saved completely to private JSON files.
-  Follow `completeResultFile` (or batch `fullResultFile`) for full data and keep
-  following pagination. A shortened inline response is not missing history.
-- `mail_save_draft` supports new/reply/reply-all/forward drafts, including
-  incomplete drafts, reply threading and original forward attachments.
-- Search dates, duplicate server updates, setup cancellation, credential rollback,
-  attachment paths and partial SMTP failures have additional regression coverage.
-- Multiline drafts and Sent copies use CRLF line endings for strict IMAP servers.
-  Replies retain a single known ancestor even when the parent lacks References.
-  Explicit SMTP authentication/message rejections report known failure; disconnects
-  or timeouts after transmission still report an unknown outcome.
-
-For a read-only installation, register the server with `serve --read-only`
-(or merge `node src/cli.js config --read-only`). Check `mail_accounts.access` is
-`read-only` and that sending/deletion tools are absent. Local `mail_setup` remains available and is marked as changing local settings.
-
-## Give this to the employee's agent
-
-Paste this into **an agent with access to the employee's computer and support for local stdio MCP servers**:
-
-> Install or update https://github.com/borystam/homepl-email-mcp to release v0.3.0 on this computer. Read and follow INSTALL_FOR_AGENTS.md from that exact release. Handle prerequisites and MCP integration yourself. Register and reload the desktop MCP first, inspect mail_setup_status, then connect through mail_setup in the actual MCP process. Do not run mailbox setup or gate it on credential checks in a CodexSandboxOnline shell. Open the private form in the app browser when available. Perform diagnostics yourself; do not ask me to run commands. I will enter my mailbox details myself in the private local setup form; never ask for my password in chat or screenshots. Verify actual MCP tools, folders, and metadata/headers for up to three messages without sending or changing mail. Reuse any saved login. Report the installed version and actual verification results, including anything blocked by a real OS or organization policy.
-
-The employee needs their **full mailbox email address, mailbox password and exact mail server hostname**. The home.pl hosting administrator password is not the mailbox password.
-
-Ordinary browser-only ChatGPT cannot run this local installer or read local Codex configuration. Use a local agent/client that exposes stdio MCP tools. Client and workspace policies determine whether those tools are available. See [official OpenAI MCP documentation](https://learn.chatgpt.com/docs/extend/mcp).
+Sign-in happens through `mail_setup` inside the registered MCP process. The private
+form verifies both logins without sending mail. Never enter a password in chat,
+commands, screenshots or MCP configuration. Reuse saved logins during upgrades.
 
 ## What it can do
 
-| Capability | Included behavior and limits |
+Full mode exposes **20 tools**. `serve --read-only` exposes **10 tools** and omits
+all mailbox mutations. Local account setup remains available and changes local
+settings. Verify actual tool discovery and `mail_accounts.access` after reload;
+read-only mode limits this connector, not the password's permissions elsewhere.
+
+| Capability | Behavior and limits |
 | --- | --- |
-| Folders and history | Lists folders exposed by the IMAP client's namespace handling, including unsubscribed folders. Reads and searches retained history in those folders, with no automatic date cutoff. Follow every page in every relevant folder; new arrivals require a new search. Shared folders outside the personal namespace need verification; see the limitation below. |
-| Message metadata | UID and UIDVALIDITY, flags, size, internal date, envelope, MIME structure and additional IDs when supported by the server. Original headers preserve order, duplicates and folding; oversized headers remain available in a complete local file. |
-| Bodies | Bounded text/HTML previews plus complete body files. HTML is returned as data, not executed. Display text may undergo charset conversion or flowed-text normalization. |
-| Original messages | Streams a complete original `.eml` with all headers and MIME content; returns a local path, byte count and SHA-256. This is the byte-preserving source of truth. |
-| Attachments | Downloads arbitrary MIME parts by part ID, including inline images, binary files and attached messages. Repeated filenames are unambiguous. MIME transfer encodings are decoded; inline display text can be normalized. The agent needs suitable file tools to interpret downloaded content. |
-| Search | IMAP search across headers and message text, with dates, addresses, flags and size filters. Searches are per folder and paginated. It does not OCR images or search inside binary attachments. Header searches can find related messages; there is no claim of automatic complete conversation reconstruction. |
-| Compose and send | New mail, replies, reply-all, forwards, CC/BCC, text/HTML and local attachments. A prepared operation has a preview and a separate send action. The transmitted MIME is retained locally; Sent copies retain BCC metadata and therefore can differ by that header. SMTP acceptance and Sent-copy saving are reported separately; uncertain sends must not be retried blindly. |
-| Drafts | Save and update new/reply/reply-all/forward server drafts, including incomplete drafts, then prepare them for sending. Updating requires UIDPLUS and returns a new UID. Sending a prepared server draft retains the source draft. |
-| Organize | Flags, move, copy, trash; create, rename, subscribe, unsubscribe and delete folders. Message mutations require observed UIDVALIDITY. Permanent message deletion requires UIDPLUS and targets one exact UID. |
+| Folders and history | List folders, including unsubscribed folders, and read/search retained server history with no date cutoff. Follow every page in every relevant folder; new arrivals need a new search. |
+| Metadata and headers | UID/UIDVALIDITY, flags, size, dates, envelope, MIME structure and server-supported IDs. Original headers preserve order, duplicates and folding. |
+| Bodies and originals | Text/HTML previews, complete body files and exact original `.eml` downloads with byte count/SHA-256. HTML is data, not executed. Display text can be normalized; raw `.eml` preserves the source bytes. |
+| Attachments | Download MIME parts by part ID, including repeated filenames, inline images, binary files and attached messages. Transfer encodings are decoded; interpreting files needs suitable tools. |
+| Search | Paginated, per-folder IMAP search across headers/text, dates, addresses, flags and sizes. No OCR, binary-attachment search or automatic complete conversation reconstruction. |
+| Compose and send | New mail, replies, reply-all, forwards, CC/BCC, text/HTML and local attachments. Prepare a preview, then send separately. SMTP acceptance and Sent-copy saving have separate outcomes; never blindly retry uncertain sends. |
+| Drafts | Create/update server drafts, including incomplete drafts, replies and forwards. Updates require UIDPLUS and return a new UID. Sending a prepared server draft retains the source draft. |
+| Organize | Flags, move, copy, trash and folder management. Message mutations need observed UIDVALIDITY; permanent deletion requires UIDPLUS and one exact UID. |
 
-The connector cannot recover mail already deleted from the server or mail kept only in an old POP/local archive. It can retrieve encrypted S/MIME/PGP content, but does not decrypt it or manage decryption keys. It does not guarantee that an AI can interpret every file format. Retrieval is on demand, not an automatic mailbox backup or a continuously synchronized search index.
+`mail_get_messages` reads up to ten exact references, defaulting to metadata and
+headers. Large results use `completeResultFile` or batch `fullResultFile`; inspect
+those private files and continue pagination. A bounded inline response is not
+complete history. Sent copies retain BCC metadata, so that header can differ from
+the transmitted MIME.
 
-On servers with a nonempty personal namespace prefix, the pinned IMAP library
-can omit or incorrectly prefix shared folders outside that namespace. This matches
-[a reported issue in another ImapFlow-based MCP](https://github.com/nikolausm/imap-mcp-server/issues/191).
-Shared-namespace coverage remains unresolved; it has not been tested on home.pl.
+The connector cannot recover deleted mail or old POP/local archives. Retrieval is
+on demand, not a backup or continuously synced search index. It retrieves S/MIME/PGP
+content without decrypting it or managing keys, and cannot guarantee that an AI
+understands every attachment format. The pinned IMAP library can omit or misname
+shared folders outside a nonempty personal namespace; [this limitation](https://github.com/nikolausm/imap-mcp-server/issues/191)
+remains unresolved and untested on home.pl.
 
-## Manual installation on Windows
+## Verified behavior
 
-Use native Windows Node.js **22.19+ on the 22.x line, or 24.6+**, npm, Git, and a local MCP-capable agent. Run the connector as the employee's normal desktop user so it can use that user's credential store. An administrator or a different OS account would have different settings and credentials.
+Authorized live macOS checks covered IMAP/SMTP, Keychain, search, metadata/headers,
+message and attachment retrieval, draft creation/update, replies, sending and
+Sent copies. Attachment hashes matched the originals. The corrected send result
+matched the Message-ID in the transmitted MIME, Sent copy and received message.
+A fresh MCP process reused the saved login and discovered all 20 tools.
 
-In PowerShell, choose a persistent installation directory:
-
-```powershell
-$homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
-New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.3.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
-Set-Location $homeplRepo
-npm.cmd ci --omit=dev --ignore-scripts
-node src/cli.js doctor
-```
-
-If that directory already exists, inspect its remote and version before reusing it; do not overwrite it. `npm ci` uses the committed dependency lockfile. Keep the installation directory in place after registration.
-
-Register and reload the MCP before login. Then ask the agent to call
-`mail_setup_status` and `mail_setup`; it opens the private form through the MCP
-process. **Type the password directly into that form, never into chat, commands,
-configuration files or screenshots.** It verifies both logins without sending mail.
-If the shell runs as `CodexSandboxOnline`, use the full agent runbook instead of
-these ordinary-user path examples; a sandbox profile is not the desktop account.
-
-Use the exact server hostname shown in **home.pl Panel → Poczta → mailbox → Serwery pocztowe** ([home.pl instructions](https://pomoc.home.pl/baza-wiedzy/gdzie-znajde-adresy-serwerow-pocztowych-dla-skrzynki-email)). For example, a server may be named `serwer123456.home.pl`; the example is not a default. `poczta.home.pl` is the webmail website, not a hostname to guess for IMAP. IMAP uses **993**, SMTP uses **465**, both with implicit TLS and certificate validation. If SMTP has a different hostname, enter it in Optional settings. External mail-client access must be enabled for the mailbox.
-
-Optional Sent, Drafts and Trash folder names use their exact server paths. Setup attempts to discover their roles; verify the resulting folders before using write operations.
-
-Register with Codex using absolute paths:
-
-```powershell
-$homeplNode = (Get-Command node.exe).Source
-$homeplCli = (Resolve-Path .\src\cli.js).Path
-codex mcp add homepl-email -- $homeplNode $homeplCli serve
-codex mcp list
-```
-
-If the Codex CLI is unavailable, run `node src/cli.js config`. It prints a ready-to-merge Codex TOML entry and a JSON `mcpServers` entry for clients that use that format, with this machine's absolute paths. Merge the appropriate entry into existing client settings; do not replace the whole settings file. No mailbox password belongs in either configuration. An explicit `HOME_MAIL_DATA_DIR` is retained in the generated client `env` settings so a separately launched desktop client uses the same account store. [Official Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
-
-Restart or reload the client as its MCP configuration requires. Ask the agent to
-connect through `mail_setup` and confirm `mail_setup_status` reports connected,
-then call `mail_accounts`, `mail_folders`, and `mail_list_messages` with `pageSize: 3`.
-It can inspect headers using `mail_get_message` with `includeBodies: false`.
-A configuration entry alone does not prove the connection works. Initial
-verification should not send, change or delete any mail.
-
-## Manual installation on macOS
-
-Use Node.js **22.19+ on the 22.x line, or 24.6+** for the Mac's native architecture, npm, Git, and a
-local MCP-capable agent. Run as the employee's usual desktop user, without `sudo`.
-In Terminal, choose a persistent directory (keep it after setup):
-
-```sh
-homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
-mkdir -p "$(dirname "$homeplRepo")"
-git clone --branch v0.3.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
-cd "$homeplRepo"
-npm ci --omit=dev --ignore-scripts
-node src/cli.js doctor
-```
-
-Inspect an existing directory before reusing it. After registering/reloading the
-MCP, use `mail_setup` to open the same private local form described above; enter
-the mailbox password there yourself. The password is saved in **macOS Keychain**.
-If macOS asks to permit this installed
-Node executable to access the connector's Keychain item, verify the request;
-choosing **Always Allow** grants future access to that item. Do not grant access
-to an unexpected executable or disable Keychain protection.
-
-Register with Codex using absolute paths, after checking for an existing entry:
-
-```sh
-homeplNode="$(node -p 'process.execPath')"
-codex mcp add homepl-email -- "$homeplNode" "$homeplRepo/src/cli.js" serve
-codex mcp list
-```
-
-If the CLI is unavailable, or you use a custom data directory, run
-`node src/cli.js config` and merge the appropriate generated configuration as
-described above. Reload the client, connect with `mail_setup` and confirm its
-status, then verify actual `mail_accounts`,
-`mail_folders` and metadata reads. Then fully quit and reopen the client and
-repeat a read **without running setup again**. This checks the installed client's
-access to saved credentials, not just the terminal's access.
-
-On Linux, use the same npm commands in a persistent per-user clone. Linux needs
-an unlocked Secret Service in the desktop session; a headless shell alone is
-insufficient.
+Full client quit/reopen, OS logout/reboot and the affected Windows desktop
+onboarding flow remain unverified. Synthetic tests and Windows/macOS CI cannot
+prove that every employee's client launches MCP with usable credentials. Complete
+the runbook's real-client checks with one employee before team rollout.
+[Validation status](STATUS.md) records evidence and remaining limits.
 
 ## Will employees need to log in repeatedly?
 
-Normally, enter the mailbox password **once per computer and OS user**. This
-connector uses password authentication for IMAP/SMTP, not OAuth, access tokens,
-refresh tokens or webmail cookies. It has no scheduled credential expiry and
-opens a fresh authenticated connection for each operation. Closing the agent
-does not remove the saved password. The setup page's 15-minute expiry applies
-only to the form, not the saved account.
+Normally, enter the mailbox password **once per computer and OS user**. The
+connector uses IMAP/SMTP password authentication, with no OAuth/refresh tokens or
+scheduled credential expiry. Closing the agent keeps the saved password. The
+setup form expires after 15 minutes; the saved account does not.
 
-What can require attention:
+- A changed password or removed credential requires setup again with the same mailbox/server.
+- A locked credential store needs unlocking or authorization. macOS can prompt again after software/Keychain changes; verify the installed Node executable before allowing access. See [Apple's access guidance](https://support.apple.com/en-ie/guide/keychain-access/kyca1243/mac) and [updated-app guidance](https://support.apple.com/en-ie/guide/keychain-access/kyca1331/mac).
+- A moved installation or Node executable requires updating MCP launch paths, which does not itself require another mailbox login.
+- A disabled mailbox, changed server or blocked external-client access requires the mailbox administrator. See [home.pl client-access settings](https://pomoc.home.pl/baza-wiedzy/jak-wlaczyc-uwierzytelnianie-dwuskladnikowe-w-poczcie-home-pl).
 
-- A changed mailbox password or deleted saved credential: run setup again with
-  the same mailbox and server. It updates the existing account's saved password.
-- A locked or inaccessible credential store: sign into the same OS account and
-  unlock/authorize the store. macOS may request access again after software or
-  Keychain changes. [Apple's Keychain access guidance](https://support.apple.com/en-ie/guide/keychain-access/kyca1243/mac)
-  and [updated-app guidance](https://support.apple.com/en-ie/guide/keychain-access/kyca1331/mac).
-- A moved installation or removed Node executable: regenerate the MCP launch
-  configuration. This does not itself require entering the mailbox password again.
-- home.pl blocks external mail clients, changes the server, or the account is
-  disabled: the mailbox administrator must resolve that. home.pl's webmail 2FA
-  settings include a separate option to block other mail clients; this MCP needs
-  that access permitted. [home.pl's 2FA guidance](https://pomoc.home.pl/baza-wiedzy/jak-wlaczyc-uwierzytelnianie-dwuskladnikowe-w-poczcie-home-pl).
-
-For a newly created mailbox, home.pl says to sign into webmail once before
-configuring a mail client. Its documented mail-client login is the full email
-address plus mailbox password. [home.pl's setup instructions](https://pomoc.home.pl/baza-wiedzy/jak-skonfigurowac-program-do-obslugi-poczty-e-mail).
-The AI application's own sign-in and company policies are separate from this
-saved mailbox login. The live Mac pilot verified saved-login reuse by a fresh
-process and native desktop MCP calls; a full client quit/reopen and normal Mac
-logout/reboot check remain necessary before promising unattended operation.
+For a new mailbox, home.pl requires an initial webmail sign-in before configuring
+a mail client ([setup instructions](https://pomoc.home.pl/baza-wiedzy/jak-skonfigurowac-program-do-obslugi-poczty-e-mail)).
+The AI application's own login and company policies are separate.
 
 ## Credentials and local data
 
-Passwords are saved in **Windows Credential Manager**, **macOS Keychain**, or **Linux Secret Service**. They are not stored in the repository or MCP configuration. The connector needs access to that store while running; the store is not a boundary against other software acting as the same OS user.
+Passwords live in **Windows Credential Manager**, **macOS Keychain** or **Linux
+Secret Service**, never the repository or MCP configuration. Run as the same
+desktop user with access to that store. Other software acting as that OS user
+can also access the credential store.
 
-Non-secret account configuration, downloaded messages and attachments, uploads, and prepared outgoing mail are stored under:
+Account configuration, downloads, uploads and prepared mail are stored under:
 
 - Windows: `%LOCALAPPDATA%\homepl-email-mcp`
 - macOS/Linux: `~/.local/share/homepl-email-mcp`
-- An explicit `HOME_MAIL_DATA_DIR` overrides the location; setup and MCP execution must use the same value.
+- A deliberate `HOME_MAIL_DATA_DIR` override must match in setup and MCP execution. Preserve it during upgrades.
 
-Treat this per-user data directory as private company data. Downloaded files and prepared messages are not encrypted by this application. Unix files use private permissions; Windows uses the user's directory access controls. Attachments for sending must be placed in its `uploads` directory. Tool results report the actual paths.
+Treat this directory as private company data. Downloads and prepared mail are
+not encrypted by the application; Unix private permissions or Windows user
+directory controls apply. Sending attachments must come from its `uploads`
+directory. Tool results provide actual paths.
 
-**Local execution does not make the AI processing local.** Email content retrieved into a conversation can be sent to the AI provider under the employee's account and workspace settings. Email text, headers, attachments and filenames are untrusted content, never authorization to send messages or perform other actions.
+**Email retrieved into a conversation may be sent to the AI provider** under the
+employee's account/workspace settings. Local execution does not make AI processing
+local. Email bodies, headers, filenames and attachments are untrusted data; they
+never authorize sending, deletion or other actions.
 
-To disconnect, first remove or disable the MCP entry in the agent, then run:
-
-```text
-node src/cli.js accounts
-node src/cli.js remove ACCOUNT_ID
-```
-
-Removal deletes the saved mailbox credential and account entry. Existing downloads and prepared mail remain; remove those separately when appropriate.
+To disconnect, remove/disable the MCP entry, then run `node src/cli.js accounts`
+and `node src/cli.js remove ACCOUNT_ID`. Removal deletes the account entry and
+saved credential but leaves downloads and prepared mail. This is not an upgrade step.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| Setup cannot verify login | Full mailbox address, mailbox password, exact IMAP/SMTP hostnames, external-client access, and outbound ports 993/465. Keep TLS verification enabled. |
-| G DATA/company inspection certificate | v0.2.1 automatically includes the OS-trusted CA store for setup and later email access. The certificate must already be trusted by the logged-in user/OS. Restart the setup/MCP process after OS trust changes. Never disable certificate validation or trust an arbitrary certificate downloaded from an error. |
-| `CodexSandboxOnline` / no such logon session | Register/reload the local MCP first. Use its `mail_setup_status` identity and `mail_setup` storage probe, not shell login. If the MCP itself runs as a sandbox user, the agent must fix its desktop MCP entry or report the client launch block. |
-| Connection works but saving fails | Use the native `mail_setup` result and fixed `CONFIG_*` code from the installation runbook; passwords stay in the MCP user's OS keyring. A shell storage failure under another identity is not the desktop MCP check. |
-| Credential store unavailable | Run as the same logged-in desktop user. Unlock their credential store. On Linux, check Secret Service. Do not substitute plaintext password storage. |
-| `node`/`npm` not found | Install a supported native Node.js LTS version (22.19+ or 24.6+) through the organization's normal software channel, then restart the terminal/client so its PATH updates. On PowerShell, use `npm.cmd`; use `codex.cmd` if an npm-installed `codex.ps1` is blocked. |
-| Server configured but tools absent | Check absolute Node/CLI paths, run `node src/cli.js doctor`, then reload the MCP client. Check workspace restrictions and whether this chat actually runs with local MCP access. |
-| Tools exist but account is missing | Run setup as the same OS user and with the same `HOME_MAIL_DATA_DIR` as the MCP process. |
-| A search page is empty but has a cursor | Continue the cursor. Large gaps between UIDs can require another bounded scan. Search every relevant folder before claiming completeness. |
-| `CONFIG_BUSY` | Another setup is updating accounts. Wait for it. After a crash, stop all setup processes and inspect saved accounts before manually removing `.accounts.lock` from the data directory. Locks are never automatically stolen. |
-| `CONFIG_RECOVERY_REQUIRED` | Credential rollback could not be confirmed. Reconnect that account through the private setup form before using it. Never dump the credential store. |
-| `UIDVALIDITY_CHANGED` | Re-list/search the folder and use the newly returned identifiers. |
-| Send timed out or Sent copy failed | Inspect `mail_outbox_status`. SMTP may already have accepted the message. Do not automatically create another send operation. |
+| Login fails | Full mailbox address, mailbox password, exact hosts, external-client access and ports 993/465. Keep TLS verification enabled. |
+| G DATA/company inspection certificate | Connections include OS-trusted roots alongside Node's roots. The certificate must already be OS-trusted; restart after approved trust changes. Never disable checks or trust an arbitrary certificate from an error. |
+| `CodexSandboxOnline` / no such logon session | Register/reload the desktop MCP first. Use its actual `mail_setup_status` identity and `mail_setup` storage probe. If MCP itself runs under a sandbox identity, correct its supported desktop entry or report the client launch block. |
+| Connection works but saving fails | Follow the native `mail_setup` result and fixed `CONFIG_*` code in the [runbook](INSTALL_FOR_AGENTS.md#3a-check-the-actual-mcp-process-and-recover-locally). Keep the same user/data directory; never substitute plaintext storage. |
+| Missing tools or account | Check absolute Node/CLI paths, actual MCP identity/data path and access mode; reload after updates. A shell's user/configuration can differ from the desktop client's. |
+| Node/npm missing | Install the current patched native LTS through the permitted software channel. In PowerShell use `npm.cmd`; use `codex.cmd` if `codex.ps1` is blocked. |
+| Empty search page with a cursor | Follow it and search every relevant folder before claiming completeness. |
+| `UIDVALIDITY_CHANGED` | Re-list/search the folder and use newly observed identifiers. |
+| Send timed out or Sent copy failed | Inspect `mail_outbox_status`. SMTP may already have accepted the message; do not create another send operation automatically. |
 
-`node src/cli.js doctor --connect` verifies saved IMAP and SMTP logins without sending mail. Share error codes and sanitized diagnostics only; never share passwords, authentication dumps, private setup URLs, or mailbox contents in public issues.
+Share sanitized error codes only. Never publish passwords, authentication dumps,
+private setup URLs or mailbox contents in GitHub issues or logs.
 
-## Development checks
+## Development
 
 ```sh
 npm ci --ignore-scripts
 npm test
 ```
 
-Tests use synthetic data and local fixtures, not employee accounts, and do not send real email. Passing local tests does not establish compatibility with a particular home.pl account or every client/OS combination.
+Tests use synthetic data and local mail fixtures, never employee mailboxes.
+Dependencies have exact direct versions and an integrity lockfile; install scripts
+are disabled. Keep optional packages enabled for the native credential binding.
+Review updates deliberately: pins and registry signatures do not guarantee safe
+package code or replace future security updates.
 
-Dependencies use exact direct versions and a committed lockfile with integrity
-hashes. Install with `npm ci --ignore-scripts`; the project `.npmrc` also disables
-install scripts and makes future dependency additions exact by default. Keep
-optional packages enabled because they contain the native OS credential binding.
-Review and test dependency updates deliberately; pins and registry signatures do
-not establish that package code is safe or replace future security updates.
-
-## Connector design comparison
-
-Checked 15 October 2026 using public documentation and schemas, not private
-connector source or authenticated mailbox access. The Codex plugin directory
-confirms Gmail and Outlook Email plugins; its listing does not expose their
-complete implementation. OpenAI's separately documented connector API has
-metadata/search, single-message reads and batch reads. That is the basis for our
-bounded batch tool, not a claim that Codex's live plugin is limited to that API.
-[OpenAI connector interfaces](https://developers.openai.com/api/docs/guides/tools-connectors-mcp).
-
-Google publishes a remote Gmail MCP with OAuth and provider-native thread IDs;
-its `get_thread` schema distinguishes metadata from body retrieval and returns
-attachment metadata. Its draft schema supports reply context, but contradicts
-its prose about attachment support, so we do not treat that as verified behavior.
-[Google setup](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server),
-[thread schema](https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/get_thread),
-[draft schema](https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/create_draft).
-
-Claude's Microsoft 365 connector is an Anthropic-hosted delegated OAuth/Graph
-proxy with separately enabled write capabilities. It targets Microsoft 365
-work/school tenants, not arbitrary Exchange servers; its documented write tools
-reject attachments and its search excludes Online Archive. Our local IMAP/SMTP
-connector retains raw MIME and attachment-file access without a hosted OAuth
-service. Provider-native thread IDs and OAuth cannot simply be copied into a
-home.pl password-based IMAP connection.
-[Anthropic security guide](https://support.claude.com/en/articles/12684923-microsoft-365-connector-security-guide).
-
-Account-wide search orchestration and exact-header related-message discovery
-remain useful future conveniences. Current searches still require every relevant
-folder and cursor; automatic complete threading is not implemented. One authorized
-live Mac pilot has passed. Full client quit/reopen and OS logout/reboot checks
-remain before broader rollout.
+See [AGENTS.md](AGENTS.md) for development rules and the dated
+[connector comparison](docs/CONNECTOR_COMPARISON.md) for design research.

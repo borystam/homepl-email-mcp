@@ -1,8 +1,11 @@
 import { userInfo } from 'node:os';
 import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { dataDir, configErrorDescriptions } from './config.js';
 import { tlsErrorDescriptions } from './tls.js';
 import { startSetup as startLocalSetup } from './setup.js';
+
+const { version: connectorVersion } = createRequire(import.meta.url)('../package.json');
 
 export const onboardingErrorDescriptions = Object.freeze({
   SETUP_REQUIRES_DESKTOP_USER: 'This MCP process runs as a Codex sandbox account. The installing agent must check the desktop app’s local MCP entry: launch the native Node executable and connector directly, reload, and check mail_setup_status again. If it still reports a sandbox account, report the client launch block. Do not enter a mailbox password or change Windows security policy in this context.',
@@ -44,7 +47,7 @@ export function createOnboarding({ startSetup = startLocalSetup, getIdentity = d
   let closed = false;
   let generation = 0;
 
-  const status = () => structuredClone(state);
+  const status = () => ({ ...structuredClone(state), connectorVersion });
   function blocked(error) {
     const code = typeof error?.code === 'string' && Object.hasOwn(errorDescriptions, error.code) ? error.code : 'SETUP_START_FAILED';
     return { status: 'blocked', error: code, message: errorDescriptions[code], ...(execution ? { execution } : {}) };
