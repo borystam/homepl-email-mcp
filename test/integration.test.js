@@ -229,7 +229,8 @@ test('MCP read-only mode excludes mutation tools and batch reads preserve per-me
   await Promise.all([server.connect(st), client.connect(ct)]);
   t.after(async () => { await client.close(); await server.close(); });
   const listed = await client.listTools();
-  assert.ok(listed.tools.every(tool => tool.annotations.readOnlyHint === true));
+  assert.ok(listed.tools.filter(tool => tool.name !== 'mail_setup').every(tool => tool.annotations.readOnlyHint === true));
+  assert.equal(listed.tools.find(tool => tool.name === 'mail_setup').annotations.readOnlyHint, false, 'local account setup is accurately marked as a local change');
   assert.ok(!listed.tools.some(tool => tool.name === 'mail_send_prepared'));
   const accounts = await client.callTool({ name: 'mail_accounts', arguments: {} });
   assert.equal(JSON.parse(accounts.content[0].text).access, 'read-only');

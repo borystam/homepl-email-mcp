@@ -1,12 +1,30 @@
 # homepl-email-mcp
 
-Connect a local AI agent to a home.pl mailbox through encrypted IMAP and SMTP. Each employee installs the connector on their own computer and signs in once through a private local form. No hosted connector or shared password database is required.
+Connect a local AI agent to a home.pl mailbox through encrypted IMAP and SMTP. Each employee connects through their desktop agent and a private local sign-in form; saved credentials are reused on that computer. No hosted connector or shared password database is required.
 
 Windows and macOS (Apple silicon and Intel) use the same connector and tools.
 See the [Windows installation](#manual-installation-on-windows) or
 [Mac installation](#manual-installation-on-macos).
 
-This is an independent community project, not an official home.pl product. Version **0.2.1** includes the setup and reliability fixes described below. One authorized live Mac pilot verified IMAP/SMTP, macOS Keychain, discovery of all 18 MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. The desktop app also loaded the native tools and successfully called `mail_accounts` and `mail_folders`. A full app quit/reopen and OS logout/reboot remain unverified. Pilot the intended version with one employee before repeating installation for the team.
+This is an independent community project, not an official home.pl product. Version **0.3.0** includes the setup and reliability fixes described below. One authorized live Mac pilot verified IMAP/SMTP, macOS Keychain, discovery of all 18 MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. The desktop app also loaded the native tools and successfully called `mail_accounts` and `mail_folders`. A full app quit/reopen and OS logout/reboot remain unverified. Pilot the intended version with one employee before repeating installation for the team.
+
+## Changes in v0.3.0
+
+- Connect from the conversation: `mail_setup` starts the private login form inside
+  the actual MCP process, and `mail_setup_status` reports completion. Passwords
+  never enter chat or tool arguments. The agent opens the form in the app browser
+  when available, or provides a local link.
+- Register/reload the MCP **before** login. Windows agent shells can run as
+  `CodexSandboxOnline`, which may lack a WinCred logon session. Shell setup is no
+  longer the employee onboarding path. The tool reports its actual host identity
+  and probes storage there; an unusable host context remains a specific block.
+- Both access modes include local account setup; mail read-only mode still omits
+  every mailbox writing tool. There are 20 tools in full mode and 10 in read-only
+  mode. An active wizard is reused and closes on MCP disconnect.
+
+The new Windows desktop flow still needs verification on the affected employee
+PC. Synthetic/native-store CI cannot prove that their client uses the intended
+Windows user. Check actual tools and saved-login reuse after reopening the client.
 
 ## Changes in v0.2.1
 
@@ -17,7 +35,7 @@ This is an independent community project, not an official home.pl product. Versi
   before opening the password form. Storage failures have fixed, safe codes so
   the installing agent can diagnose them without reading the mailbox password.
 - The agent installation runbook covers prerequisites, storage recovery, client
-  integration and verification. Use `doctor --storage` for a credential-free
+  integration and verification. The v0.3.0 sequence supersedes shell-first setup. Use `doctor --storage` for a credential-free
   storage check. Node.js 22.19+ (22.x) or 24.6+ is required.
 
 ## Changes in v0.2.0
@@ -27,8 +45,8 @@ Version **v0.2.0** includes these improvements over the initial v0.1.0 release:
 - Native browser setup no longer rejects its own form POST with “Forbidden”.
   Verification errors now identify the failing IMAP/SMTP stage with fixed safe
   messages, without exposing provider diagnostics or credentials.
-- `serve --read-only` exposes only mailbox reading tools. `config --read-only`
-  generates the corresponding client settings; write tools are absent from the
+- `serve --read-only` exposes mailbox reading tools and local account onboarding. `config --read-only`
+  generates the corresponding client settings; mailbox writing tools are absent from the
   MCP catalog. This limits this connector process, not the mailbox password's
   permissions in other applications. Default `serve` retains full functionality.
 - `mail_get_messages` reads up to ten exact message references in one call,
@@ -48,13 +66,13 @@ Version **v0.2.0** includes these improvements over the initial v0.1.0 release:
 
 For a read-only installation, register the server with `serve --read-only`
 (or merge `node src/cli.js config --read-only`). Check `mail_accounts.access` is
-`read-only` and that sending/deletion tools are absent.
+`read-only` and that sending/deletion tools are absent. Local `mail_setup` remains available and is marked as changing local settings.
 
 ## Give this to the employee's agent
 
 Paste this into **an agent with access to the employee's computer and support for local stdio MCP servers**:
 
-> Install or update https://github.com/borystam/homepl-email-mcp to release v0.2.1 on this computer. Read and follow INSTALL_FOR_AGENTS.md from that exact release. Handle missing prerequisites, dependency installation, automatic certificate trust, storage checks and repair, and MCP integration in this agent. Perform diagnostics yourself; do not ask me to run commands. I will enter my mailbox details myself in the private local setup form; never ask for my password in chat or screenshots. Verify actual MCP tools, folders, and metadata/headers for up to three messages without sending or changing mail. Reuse any saved login. Report the installed version and actual verification results, including anything blocked by a real OS or organization policy.
+> Install or update https://github.com/borystam/homepl-email-mcp to release v0.3.0 on this computer. Read and follow INSTALL_FOR_AGENTS.md from that exact release. Handle prerequisites and MCP integration yourself. Register and reload the desktop MCP first, inspect mail_setup_status, then connect through mail_setup in the actual MCP process. Do not run mailbox setup or gate it on credential checks in a CodexSandboxOnline shell. Open the private form in the app browser when available. Perform diagnostics yourself; do not ask me to run commands. I will enter my mailbox details myself in the private local setup form; never ask for my password in chat or screenshots. Verify actual MCP tools, folders, and metadata/headers for up to three messages without sending or changing mail. Reuse any saved login. Report the installed version and actual verification results, including anything blocked by a real OS or organization policy.
 
 The employee needs their **full mailbox email address, mailbox password and exact mail server hostname**. The home.pl hosting administrator password is not the mailbox password.
 
@@ -90,16 +108,20 @@ In PowerShell, choose a persistent installation directory:
 ```powershell
 $homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
 New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.2.1 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
+git clone --branch v0.3.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
 Set-Location $homeplRepo
 npm.cmd ci --omit=dev --ignore-scripts
 node src/cli.js doctor
-node src/cli.js setup
 ```
 
 If that directory already exists, inspect its remote and version before reusing it; do not overwrite it. `npm ci` uses the committed dependency lockfile. Keep the installation directory in place after registration.
 
-The setup command opens a short-lived `http://127.0.0.1:…` form. **Type the password directly into that form, never into a chat, command, configuration file or screenshot.** Leave the setup process running until it confirms connection. It verifies both logins without sending an email.
+Register and reload the MCP before login. Then ask the agent to call
+`mail_setup_status` and `mail_setup`; it opens the private form through the MCP
+process. **Type the password directly into that form, never into chat, commands,
+configuration files or screenshots.** It verifies both logins without sending mail.
+If the shell runs as `CodexSandboxOnline`, use the full agent runbook instead of
+these ordinary-user path examples; a sandbox profile is not the desktop account.
 
 Use the exact server hostname shown in **home.pl Panel → Poczta → mailbox → Serwery pocztowe** ([home.pl instructions](https://pomoc.home.pl/baza-wiedzy/gdzie-znajde-adresy-serwerow-pocztowych-dla-skrzynki-email)). For example, a server may be named `serwer123456.home.pl`; the example is not a default. `poczta.home.pl` is the webmail website, not a hostname to guess for IMAP. IMAP uses **993**, SMTP uses **465**, both with implicit TLS and certificate validation. If SMTP has a different hostname, enter it in Optional settings. External mail-client access must be enabled for the mailbox.
 
@@ -116,7 +138,12 @@ codex mcp list
 
 If the Codex CLI is unavailable, run `node src/cli.js config`. It prints a ready-to-merge Codex TOML entry and a JSON `mcpServers` entry for clients that use that format, with this machine's absolute paths. Merge the appropriate entry into existing client settings; do not replace the whole settings file. No mailbox password belongs in either configuration. An explicit `HOME_MAIL_DATA_DIR` is retained in the generated client `env` settings so a separately launched desktop client uses the same account store. [Official Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
 
-Restart or reload the client as its MCP configuration requires. A configuration entry alone does not prove the connection works: ask the agent to call `mail_accounts`, `mail_folders`, and `mail_list_messages` with `pageSize: 3`. It can inspect headers using `mail_get_message` with `includeBodies: false`. Initial verification should not send, change or delete any mail.
+Restart or reload the client as its MCP configuration requires. Ask the agent to
+connect through `mail_setup` and confirm `mail_setup_status` reports connected,
+then call `mail_accounts`, `mail_folders`, and `mail_list_messages` with `pageSize: 3`.
+It can inspect headers using `mail_get_message` with `includeBodies: false`.
+A configuration entry alone does not prove the connection works. Initial
+verification should not send, change or delete any mail.
 
 ## Manual installation on macOS
 
@@ -127,16 +154,16 @@ In Terminal, choose a persistent directory (keep it after setup):
 ```sh
 homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
 mkdir -p "$(dirname "$homeplRepo")"
-git clone --branch v0.2.1 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
+git clone --branch v0.3.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
 cd "$homeplRepo"
 npm ci --omit=dev --ignore-scripts
 node src/cli.js doctor
-node src/cli.js setup
 ```
 
-Inspect an existing directory before reusing it. Setup opens the same private
-local form described above; enter the mailbox password there yourself. The
-password is saved in **macOS Keychain**. If macOS asks to permit this installed
+Inspect an existing directory before reusing it. After registering/reloading the
+MCP, use `mail_setup` to open the same private local form described above; enter
+the mailbox password there yourself. The password is saved in **macOS Keychain**.
+If macOS asks to permit this installed
 Node executable to access the connector's Keychain item, verify the request;
 choosing **Always Allow** grants future access to that item. Do not grant access
 to an unexpected executable or disable Keychain protection.
@@ -151,7 +178,8 @@ codex mcp list
 
 If the CLI is unavailable, or you use a custom data directory, run
 `node src/cli.js config` and merge the appropriate generated configuration as
-described above. Reload the client and verify actual `mail_accounts`,
+described above. Reload the client, connect with `mail_setup` and confirm its
+status, then verify actual `mail_accounts`,
 `mail_folders` and metadata reads. Then fully quit and reopen the client and
 repeat a read **without running setup again**. This checks the installed client's
 access to saved credentials, not just the terminal's access.
@@ -221,7 +249,8 @@ Removal deletes the saved mailbox credential and account entry. Existing downloa
 | --- | --- |
 | Setup cannot verify login | Full mailbox address, mailbox password, exact IMAP/SMTP hostnames, external-client access, and outbound ports 993/465. Keep TLS verification enabled. |
 | G DATA/company inspection certificate | v0.2.1 automatically includes the OS-trusted CA store for setup and later email access. The certificate must already be trusted by the logged-in user/OS. Restart the setup/MCP process after OS trust changes. Never disable certificate validation or trust an arbitrary certificate downloaded from an error. |
-| Connection works but saving fails | The agent runs `node src/cli.js doctor --storage` in the same native-user execution context as setup and the MCP. Follow the fixed `CONFIG_*` code using the installation runbook; passwords stay in the OS keyring. |
+| `CodexSandboxOnline` / no such logon session | Register/reload the local MCP first. Use its `mail_setup_status` identity and `mail_setup` storage probe, not shell login. If the MCP itself runs as a sandbox user, the agent must fix its desktop MCP entry or report the client launch block. |
+| Connection works but saving fails | Use the native `mail_setup` result and fixed `CONFIG_*` code from the installation runbook; passwords stay in the MCP user's OS keyring. A shell storage failure under another identity is not the desktop MCP check. |
 | Credential store unavailable | Run as the same logged-in desktop user. Unlock their credential store. On Linux, check Secret Service. Do not substitute plaintext password storage. |
 | `node`/`npm` not found | Install a supported native Node.js LTS version (22.19+ or 24.6+) through the organization's normal software channel, then restart the terminal/client so its PATH updates. On PowerShell, use `npm.cmd`; use `codex.cmd` if an npm-installed `codex.ps1` is blocked. |
 | Server configured but tools absent | Check absolute Node/CLI paths, run `node src/cli.js doctor`, then reload the MCP client. Check workspace restrictions and whether this chat actually runs with local MCP access. |
