@@ -205,3 +205,173 @@ test('invalid cursor and missing MIME errors carry safe machine-actionable codes
   await assert.rejects(f.invoke('mail_get_message', { ...ref, uid: 999 }), { code: 'MESSAGE_NOT_FOUND' });
   await assert.rejects(f.invoke('mail_search_messages', { accountId: 'work', folder: 'INBOX', query: { headers: { 'Message-ID': false } } }), /Invalid input/);
 });
+
+test('invalid calendar dates are rejected before IMAP can silently drop the filter', async () => {
+  const f = fixture();
+  for (const since of ['2026-02-30', '2026-13-01', '2025-02-29']) {
+    await assert.rejects(f.invoke('mail_search_messages', { accountId: 'work', folder: 'INBOX', query: { since } }));
+  }
+  assert.equal(f.calls.length, 0);
+  const valid = await f.invoke('mail_search_messages', { accountId: 'work', folder: 'INBOX', query: { since: '2024-02-29' } });
+  assert.ok(valid.messages.length);
+});
+
+test('invalid or missing server UIDNEXT must not claim the entire history is empty', async () => {
+  for (const value of [0, -1, null, undefined, NaN, 1.5, '9002']) {
+    const f = fixture(); f.client.mailbox.uidNext = value;
+    await assert.rejects(f.invoke('mail_list_messages', { accountId: 'work', folder: 'INBOX' }), { code: 'INVALID_SERVER_UIDNEXT' });
+  }
+});
+
+test('duplicate FETCH updates merge by UID instead of duplicating page results', async () => {
+  const f = fixture({ async *fetch(range, query, options) {
+    assert.equal(options.uid, true);
+    yield { uid: 9001, seq: 5, envelope: { subject: 'original' }, flags: new Set() };
+    yield { uid: 9001, seq: 5, flags: new Set(['\\Seen']) };
+    yield { uid: 777777, seq: 6, envelope: { subject: 'unsolicited foreign message' } };
+  } });
+  const page = await f.invoke('mail_list_messages', { accountId: 'work', folder: 'INBOX', pageSize: 1 });
+  assert.equal(page.messages.length, 1);
+  assert.equal(page.messages[0].envelope.subject, 'original');
+  assert.deepEqual(page.messages[0].flags, ['\\Seen']);
+});
+
+test('preview budget counts final UTF8 bytes, including unknown encodings and invalid input', async () => {
+  const payload = Buffer.alloc(900, 0xff);
+  const f = fixture({ async download() {
+    return { content: Readable.from([payload]), meta: { contentType: 'text/plain', charset: 'unknown-charset' } };
+  } });
+  f.records[0].bodyStructure = { type: 'text/plain' };
+  const result = await f.invoke('mail_get_message', { ...ref, previewBytes: 256 });
+  assert.ok(Buffer.byteLength(result.bodies[0].preview, 'utf8') <= 256);
+  assert.equal(result.bodies[0].previewTruncated, true);
+  assert.deepEqual(f.files[0].bytes, payload);
+});
+
+test('large metadata is saved losslessly while serialized tool output retains its cursor within 64 KiB', async () => {
+  const f = fixture();
+  const giant = 'same-large-value-'.repeat(20000);
+  f.records.at(-1).envelope.subject = giant;
+  f.records.at(-1).bodyStructure = { type: 'multipart/mixed', childNodes: [{ part: '1', type: 'application/pdf', dispositionParameters: { filename: giant } }] };
+  const page = await f.invoke('mail_list_messages', { accountId: 'work', folder: 'INBOX', pageSize: 2 });
+  assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 65536);
+  assert.equal(page.outputTruncated, true);
+  assert.ok(page.completeResultFile.path);
+  assert.ok(page.nextCursor);
+  assert.deepEqual(page.messages.map(message => message.uid), [9001, 2024]);
+  const full = JSON.parse(f.files.find(file => file.filename.endsWith('.json')).bytes);
+  assert.equal(full.messages[0].envelope.subject, giant);
+  assert.equal(full.nextCursor, page.nextCursor);
+});
+
+test('expunge between SEARCH and FETCH reports the missing UID and pagination still reaches old mail', async () => {
+  const f = fixture();
+  const originalFetch = f.client.fetch.bind(f.client);
+  f.client.fetch = async function* (range, query, options) {
+    f.records.splice(f.records.findIndex(record => record.uid === 9001), 1);
+    yield* originalFetch(range, query, options);
+    f.client.fetch = originalFetch;
+  };
+  const first = await f.invoke('mail_list_messages', { accountId: 'work', folder: 'INBOX', pageSize: 2 });
+  assert.deepEqual(first.messages.map(message => message.uid), [2024]);
+  assert.deepEqual(first.missingUids, [9001]);
+  const second = await f.invoke('mail_list_messages', { accountId: 'work', folder: 'INBOX', pageSize: 100, cursor: first.nextCursor });
+  assert.deepEqual(second.messages.map(message => message.uid), [501, 18, 3]);
+  assert.equal(second.nextCursor, null);
+});
+
+test('sparse history traverses multiple empty pages without skipping retained UIDs', async () => {
+  const f = fixture(); f.client.mailbox.uidNext = 450002;
+  f.records.push({ uid: 450001, seq: 6 });
+  const seen = [];
+  let cursor;
+  let pages = 0;
+  do {
+    const page = await f.invoke('mail_list_messages', { accountId: 'work', folder: 'INBOX', pageSize: 2, ...(cursor ? { cursor } : {}) });
+    seen.push(...page.messages.map(message => message.uid));
+    cursor = page.nextCursor;
+    assert.ok(++pages < 10, 'Bounded sparse scan must make forward progress');
+  } while (cursor);
+  assert.deepEqual(seen, [450001, 9001, 2024, 501, 18, 3]);
+});
+
+test('cursor from another account is rejected before opening any account connection', async () => {
+  const f = fixture();
+  const first = await f.invoke('mail_list_messages', { accountId: 'work', folder: 'INBOX', pageSize: 1 });
+  f.calls.length = 0;
+  await assert.rejects(f.invoke('mail_list_messages', { accountId: 'personal', folder: 'INBOX', cursor: first.nextCursor }), { code: 'CURSOR_SCOPE_MISMATCH' });
+  assert.equal(f.calls.length, 0);
+});
+
+test('large duplicate headers keep exact complete bytes and bounded serialized output', async () => {
+  const f = fixture();
+  const header = Buffer.concat([Buffer.from('Received: old\r\nReceived: new\r\nX-Bytes: '), Buffer.alloc(90000, 0xff), Buffer.from('\r\n\r\n')]);
+  f.records[0].headers = header;
+  const result = await f.invoke('mail_get_message', { ...ref, includeBodies: false, headerPreviewBytes: 1024 });
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 65536);
+  assert.equal(result.headers.truncated, true);
+  assert.deepEqual(result.headers.entries.slice(0, 2).map(item => item.name), ['Received', 'Received']);
+  assert.deepEqual(f.files.find(file => file.filename.endsWith('-headers.txt')).bytes, header);
+  assert.equal(result.headers.completeFile.bytes, header.length);
+});
+
+test('output budget fallback preserves every header byte in the complete result file', async () => {
+  const f = fixture();
+  const header = Buffer.concat([Buffer.from('X-Bytes: '), Buffer.alloc(24000, 0x01), Buffer.from('\r\n\r\n')]);
+  f.records[0].headers = header;
+  const result = await f.invoke('mail_get_message', { ...ref, includeBodies: false });
+  assert.equal(result.outputTruncated, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 65536);
+  const full = JSON.parse(f.files.find(file => file.filename.endsWith('.json')).bytes);
+  assert.deepEqual(Buffer.from(full.headers.rawBase64, 'base64'), header);
+  assert.equal(full.uid, 3);
+  assert.equal(full.uidValidity, '55');
+});
+
+test('download errors never return a successful partial file', async () => {
+  const failure = Object.assign(new Error('synthetic transport failure'), { code: 'ECONNRESET' });
+  const stream = Readable.from((async function* () { yield Buffer.from('partial'); throw failure; })());
+  const f = fixture({ async download() { return { content: stream, meta: {} }; } });
+  await assert.rejects(f.invoke('mail_download_raw', ref), failure);
+  assert.equal(stream.destroyed, true);
+  assert.equal(f.files.length, 0);
+});
+
+test('failure opening the destination destroys both stream layers without consuming the mailbox body', async () => {
+  let consumed = false;
+  const stream = Readable.from((async function* () { consumed = true; yield Buffer.from('unread'); })());
+  const f = fixture({ async download() { return { content: stream, meta: {} }; } });
+  let outer;
+  f.ctx.saveStream = async input => { outer = input; throw Object.assign(new Error('synthetic disk failure'), { code: 'ENOSPC' }); };
+  await assert.rejects(f.invoke('mail_download_raw', ref), { code: 'ENOSPC' });
+  assert.equal(stream.destroyed, true);
+  assert.equal(outer.destroyed, true);
+  assert.equal(consumed, false);
+});
+
+test('single-part non-UTF8 body preview decodes text while preserving the downloaded bytes', async () => {
+  const encoded = Buffer.from([0xa1, 0xb1, 0xc6, 0xe6, 0xa3, 0xb3]);
+  const f = fixture({ async download(id, part) {
+    assert.equal(part, '1');
+    return { content: Readable.from([encoded]), meta: { contentType: 'text/plain', charset: 'iso-8859-2' } };
+  } });
+  f.records[0].bodyStructure = { type: 'text/plain', parameters: { charset: 'iso-8859-2' } };
+  const result = await f.invoke('mail_get_message', ref);
+  assert.equal(result.bodies[0].preview, 'ĄąĆćŁł');
+  assert.equal(result.bodies[0].previewTruncated, false);
+  assert.deepEqual(f.files[0].bytes, encoded);
+});
+
+test('inline attachment content IDs and duplicate names remain separate from body previews', async () => {
+  const f = fixture();
+  f.records[0].bodyStructure = { type: 'multipart/related', childNodes: [
+    { type: 'text/html', part: '1' },
+    { type: 'image/png', part: '2', id: '<first-image>', disposition: 'inline', dispositionParameters: { filename: 'same.png' } },
+    { type: 'image/png', part: '3', id: '<second-image>', disposition: 'inline', dispositionParameters: { filename: 'same.png' } }
+  ] };
+  const result = await f.invoke('mail_get_message', { ...ref, includeBodies: false });
+  assert.deepEqual(result.bodyPartsNotFetched, ['1']);
+  assert.deepEqual(result.parts.slice(1).map(part => [part.partId, part.contentId, part.filename]), [
+    ['2', '<first-image>', 'same.png'], ['3', '<second-image>', 'same.png']
+  ]);
+});

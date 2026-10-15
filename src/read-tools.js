@@ -11,7 +11,10 @@ const pageFields = { accountId, folder, pageSize: z.number().int().min(1).max(10
 const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
 const UID_WINDOW = 10000;
 const MAX_WINDOWS = 20;
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, 'Use a real calendar date in YYYY-MM-DD format.');
 const headerName = z.string().min(1).max(78).regex(/^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/);
 const searchFields = {
   from: z.string().max(1000).optional(), to: z.string().max(1000).optional(),
@@ -40,6 +43,24 @@ function jsonValue(value) {
   return value;
 }
 
+const MAX_RESULT_BYTES = 64 * 1024;
+async function boundedResult(ctx, name, result) {
+  const serialized = Buffer.from(JSON.stringify(result));
+  if (serialized.length <= MAX_RESULT_BYTES) return result;
+  // Keep every original field accessible without allowing a large MIME tree,
+  // subject or header block to consume the agent's entire tool context.
+  const completeResultFile = await ctx.saveBuffer(serialized, `${name}-result.json`);
+  const summary = { outputTruncated: true, completeResultFile,
+    note: 'Output exceeded 64 KiB. Read completeResultFile for every original field; pagination and message identities below remain exact.' };
+  for (const key of ['accountId', 'folder', 'uid', 'uidValidity', 'order', 'snapshotMaxUid', 'nextCursor', 'historyExhausted', 'scanLimited', 'missingUids']) {
+    if (result[key] !== undefined) summary[key] = result[key];
+  }
+  if (result.messages) summary.messages = result.messages.map(({ uid }) => ({ uid }));
+  if (result.folders) summary.folderCount = result.folders.length;
+  if (result.parts) summary.partCount = result.parts.length;
+  return summary;
+}
+
 function metadata(message) {
   const result = {};
   // Sequence numbers deliberately never escape this layer: they change after expunge.
@@ -61,7 +82,7 @@ function decodeCursor(value, args, hash) {
   let decoded;
   try { decoded = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')); } catch { throw mailError('INVALID_CURSOR', 'Invalid mail cursor; start a new search.'); }
   if (!decoded || typeof decoded !== 'object' || decoded.v !== 1 || decoded.accountId !== args.accountId || decoded.folder !== args.folder || decoded.query !== hash ||
-      !/^\d+$/.test(decoded.uidValidity) || !Number.isSafeInteger(decoded.upper) || decoded.upper < 1 ||
+      typeof decoded.uidValidity !== 'string' || !/^[1-9]\d{0,19}$/.test(decoded.uidValidity) || !Number.isSafeInteger(decoded.upper) || decoded.upper < 1 ||
       !Number.isSafeInteger(decoded.watermark) || decoded.watermark > 0xffffffff || decoded.upper > decoded.watermark) {
     throw mailError('CURSOR_SCOPE_MISMATCH', 'Mail cursor does not match this account, folder or search; start a new search.');
   }
@@ -82,8 +103,11 @@ async function messagePage(ctx, args, query = {}) {
     const validity = String(client.mailbox.uidValidity);
     // Also validate here so injected contexts cannot silently accept a stale cursor.
     if (cursor && cursor.uidValidity !== validity) throw mailError('UIDVALIDITY_CHANGED', 'Mailbox UIDVALIDITY changed; start a new search.');
-    const watermark = cursor?.watermark ?? Math.max(0, Number(client.mailbox.uidNext) - 1);
-    if (!Number.isSafeInteger(watermark) || watermark > 0xffffffff) throw mailError('INVALID_SERVER_UIDNEXT', 'Server did not provide a valid UIDNEXT.');
+    const serverUidNext = client.mailbox.uidNext;
+    if (!Number.isSafeInteger(serverUidNext) || serverUidNext < 1 || serverUidNext > 0xffffffff) {
+      throw mailError('INVALID_SERVER_UIDNEXT', 'Server did not provide a valid UIDNEXT.');
+    }
+    const watermark = cursor?.watermark ?? serverUidNext - 1;
     let upper = cursor?.upper ?? watermark;
     const selected = [];
     let windows = 0;
@@ -99,14 +123,14 @@ async function messagePage(ctx, args, query = {}) {
       upper = matches.length >= remaining ? selected.at(-1) - 1 : lower - 1;
       windows++;
     }
-    const messages = [];
+    const byUid = new Map();
     if (selected.length) {
       // Consume fetch completely before any other IMAP operation (ImapFlow lock constraint).
       for await (const item of client.fetch(selected.join(','), metadataQuery, { uid: true })) {
-        if (selected.includes(item.uid)) messages.push(metadata(item));
+        if (selected.includes(item.uid)) byUid.set(item.uid, { ...byUid.get(item.uid), ...metadata(item) });
       }
-      messages.sort((a, b) => b.uid - a.uid);
     }
+    const messages = [...byUid.values()].sort((a, b) => b.uid - a.uid);
     const nextCursor = upper >= 1 ? encodeCursor({ v: 1, accountId: args.accountId, folder: args.folder, query: hash, uidValidity: validity, upper, watermark }) : null;
     return {
       accountId: args.accountId, folder: args.folder, uidValidity: validity,
@@ -192,12 +216,16 @@ async function saveDownload(ctx, download, filename, previewBytes = 0) {
   })());
   let file;
   try { file = await ctx.saveStream(source, filename); }
-  finally { if (!download.content.destroyed) download.content.destroy(); }
+  finally { source.destroy(); if (!download.content.destroyed) download.content.destroy(); }
   if (!previewBytes) return { file, meta: jsonValue(download.meta ?? {}) };
   const buffer = Buffer.concat(preview);
   let decoder;
   try { decoder = new TextDecoder(download.meta?.charset || 'utf-8'); } catch { decoder = new TextDecoder('utf-8'); }
-  return { file, meta: jsonValue(download.meta ?? {}), preview: decoder.decode(buffer, { stream: file.bytes > captured }), previewTruncated: file.bytes > captured };
+  const decoded = decoder.decode(buffer, { stream: file.bytes > captured });
+  const utf8 = Buffer.from(decoded, 'utf8');
+  const overflow = utf8.length > previewBytes;
+  const text = overflow ? new TextDecoder().decode(utf8.subarray(0, previewBytes), { stream: true }) : decoded;
+  return { file, meta: jsonValue(download.meta ?? {}), preview: text, previewCharset: decoder.encoding, previewTruncated: file.bytes > captured || overflow };
 }
 
 export function readTools(ctx) {
@@ -274,5 +302,8 @@ export function readTools(ctx) {
           ...await saveDownload(ctx, download, part.filename || `message-${args.uid}-part-${args.partId}`) };
       })
     }
-  ];
+  ].map(tool => ({ ...tool,
+    description: `${tool.description} Results exceeding 64 KiB are saved completely to a private JSON file and return a compact summary with completeResultFile.`,
+    handler: async args => boundedResult(ctx, tool.name, await tool.handler(args))
+  }));
 }

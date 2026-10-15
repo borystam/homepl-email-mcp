@@ -2,13 +2,28 @@
 
 Use this runbook when the user requests installation of this connector. It prepares a local mailbox connection for that user's agent; it does not authorize sending mail, deleting content, or accessing unrelated accounts. The user's installation request authorizes the necessary download, local dependency installation, client configuration and stated read verification. Do not insert an additional approval gate for those steps.
 
-Target release: **v0.1.0** from **https://github.com/borystam/homepl-email-mcp**. Read the release's README for capabilities and limits. This release has not yet been tested against a live home.pl mailbox.
+Target release: **v0.2.0** from **https://github.com/borystam/homepl-email-mcp**. Read that exact release's README for capabilities and limits. One authorized live Mac pilot verified IMAP/SMTP, Keychain, actual MCP tools, folder and metadata/header reads, and saved-login reuse by a fresh process. Native desktop MCP calls also succeeded. A full app quit/reopen and OS logout/reboot remain unverified; perform the checks below on the employee's installation.
+
+## v0.2.0 modes and result handling
+
+The instructions below pin v0.2.0. `serve --read-only` removes all mutation tools,
+and `config --read-only` generates that mode. Verify `mail_accounts.access` and
+actual tool discovery after reload.
+Use `mail_get_messages` for up to ten exact references; it returns metadata only
+unless bodies are requested. Large results use `completeResultFile` or batch
+`fullResultFile`; inspect the referenced private JSON rather than assuming fields
+were omitted by the server. Generated config retains an explicit
+`HOME_MAIL_DATA_DIR` for desktop clients that do not inherit the shell environment.
 
 ## 1. Establish the local execution environment
 
 Confirm that this agent can execute on the employee's computer and load local **stdio MCP** servers. Ordinary browser-only ChatGPT cannot perform this installation or inherit a local Codex configuration. If no suitable local execution/client exists, explain that concrete requirement and stop instead of claiming success.
 
-Use native Windows Node.js 22+ and the employee's normal desktop account for the Windows rollout. Do not silently switch to WSL: it has a different credential store and filesystem. macOS/Linux are also supported by the code; Linux needs a persistent, unlocked Secret Service.
+Support Windows and macOS (Apple silicon or Intel), using native Node.js 22+ and
+the employee's normal desktop account. On Windows, do not silently switch to WSL:
+it has a different credential store and filesystem. On Mac, use native Node and
+do not run setup or the MCP with `sudo`. Linux also works with a persistent,
+unlocked Secret Service; Linux credential persistence is not yet verified in CI.
 
 Check Node, npm, Git, the actual client and existing MCP configuration. Install missing prerequisites through the machine's normal permitted software channel when allowed by the user's request and organizational policy. Respect an actual policy block; do not work around it. Never dump environment variables or credential-store contents for diagnosis.
 
@@ -19,7 +34,7 @@ Choose a persistent per-user directory. On Windows, the suggested directory is `
 ```powershell
 $homeplRepo = Join-Path $env:LOCALAPPDATA "Programs\homepl-email-mcp"
 New-Item -ItemType Directory -Force (Split-Path $homeplRepo) | Out-Null
-git clone --branch v0.1.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
+git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git $homeplRepo
 Set-Location $homeplRepo
 npm.cmd ci --omit=dev --ignore-scripts
 node src/cli.js doctor
@@ -27,7 +42,23 @@ node src/cli.js doctor
 
 Check each exit code. If a checkout already exists, verify its remote, commit and local changes; reuse a matching clean installation or choose another directory. Do not overwrite unrelated files, discard local changes or silently install `main` when the release is unavailable. Record `git rev-parse HEAD` and `git describe --tags --exact-match` for the completion report.
 
-On macOS/Linux, use a persistent directory under the user's home and the same Git command, followed by `npm ci --omit=dev --ignore-scripts`. Use the native Node executable. The credential-store dependency ships platform binaries; `doctor` checks whether the native binding loads. A failed platform binding is a setup failure, not a reason to store passwords in text files.
+On macOS, use Terminal:
+
+```sh
+homeplRepo="$HOME/Library/Application Support/homepl-email-mcp/app"
+mkdir -p "$(dirname "$homeplRepo")"
+git clone --branch v0.2.0 --depth 1 https://github.com/borystam/homepl-email-mcp.git "$homeplRepo"
+cd "$homeplRepo"
+npm ci --omit=dev --ignore-scripts
+node src/cli.js doctor
+```
+
+Apply the same existing-directory and exit-code checks. Use the Mac's native
+Node architecture (arm64 on Apple silicon, x64 on Intel). On Linux, use a
+persistent directory under the user's home and the same Git/npm commands.
+The credential-store dependency ships platform binaries; `doctor` checks whether
+the native binding loads, not whether a saved password can be retrieved. A failed
+platform binding is a setup failure, not a reason to store passwords in text files.
 
 ## 3. Guide the user through private login
 
@@ -44,6 +75,18 @@ Tell the user to enter these directly into the local form:
 
 Setup verifies IMAP and SMTP credentials without sending mail, then saves the password in Windows Credential Manager/macOS Keychain/Linux Secret Service. If it fails, check the exact hostname and external-client access; retain certificate verification. Handle the setup URL as private and short-lived.
 
+For a brand-new mailbox, home.pl requires an initial webmail sign-in before mail
+client configuration. Let the user perform that themselves. The administrator's
+option to block access from other mail programs also blocks this connector;
+do not change that policy implicitly. Webmail 2FA does not make this connector an
+OAuth or app-password integration. See [home.pl configuration](https://pomoc.home.pl/baza-wiedzy/jak-skonfigurowac-program-do-obslugi-poczty-e-mail)
+and [2FA/client-access settings](https://pomoc.home.pl/baza-wiedzy/jak-wlaczyc-uwierzytelnianie-dwuskladnikowe-w-poczcie-home-pl).
+
+On Mac, explain an expected Keychain permission prompt for this installed Node
+executable and the connector's credential item. The user may choose **Always
+Allow** for future access to that item after verifying the request. Do not read
+the user's Keychain contents, change its lock policy or approve unexpected apps.
+
 Remind the user once that retrieved email content may be sent to their AI provider. The connector runs locally, but the AI service may not.
 
 ## 4. Register the server in the actual client
@@ -57,7 +100,20 @@ codex mcp add homepl-email -- $homeplNode $homeplCli serve
 codex mcp list
 ```
 
-Inspect existing entries first. Update the matching connector deliberately instead of creating duplicates or replacing unrelated settings. For other shells, resolve native absolute paths and use the same `codex mcp add homepl-email -- <node> <cli.js> serve` argument structure.
+For macOS, from the installation directory:
+
+```sh
+homeplNode="$(node -p 'process.execPath')"
+homeplCli="$homeplRepo/src/cli.js"
+codex mcp add homepl-email -- "$homeplNode" "$homeplCli" serve
+codex mcp list
+```
+
+Inspect existing entries first. Update the matching connector deliberately
+instead of creating duplicates or replacing unrelated settings. Keep the
+installation directory and native Node executable available at those paths.
+With a custom `HOME_MAIL_DATA_DIR`, prefer the generated configuration below so
+the desktop client retains that location.
 
 If the CLI is unavailable, run `node src/cli.js config` and merge its generated Codex TOML entry into the appropriate user configuration, or its JSON `mcpServers` entry into a client that supports that format. The generated TOML sets `tool_timeout_sec = 180`; this is useful for larger downloads. Do not paste the combined TOML-and-JSON command output as a single config document. Preserve existing settings and client approval policies. Never put mailbox credentials in MCP config. [Official Codex MCP setup](https://learn.chatgpt.com/docs/extend/mcp).
 
@@ -74,9 +130,25 @@ After reload, use the actual connected tools:
 
 An empty mailbox is a valid result; report that folder access worked and message reading could not be sampled. `node src/cli.js doctor --connect` is an additional login check, not a substitute for MCP discovery and live tool invocation. It sends no email.
 
+Then have the employee fully quit and reopen the MCP client. Repeat
+`mail_accounts` and `mail_folders` **without running setup again**, to verify the
+actual client can reuse the saved credential. If the current session cannot
+survive a client restart, clearly hand off that remaining check. Before rolling
+out to everyone, check the pilot again after a normal OS logout/reboot and login;
+do not reboot their machine automatically. CI validates fresh-process persistence,
+not the employee's desktop lock/reboot policies.
+
 Do not send a test message or modify mail automatically. Write tools are available for later explicit user requests. Do not create dummy drafts, mark messages read, move messages, or delete anything during installation verification.
 
 Report: installed release and commit, installation path, account connected (without password), MCP client/entry, which live checks succeeded, and any remaining limitation. If a restart or user action remains, say so clearly instead of calling installation fully verified.
+
+Explain the maintenance expectation plainly: the mailbox password is stored
+once per computer/user and reused; this connector has no OAuth/refresh tokens or
+scheduled re-login. Its 15-minute setup URL does not expire the saved account.
+If the mailbox password changes or the saved credential is removed, repeat setup
+with the same email and server to update the account. A locked credential store
+needs unlocking, not a password reset. Node/app moves may require regenerating
+the MCP configuration; the AI client's own login remains separate.
 
 ## Operating rules after installation
 

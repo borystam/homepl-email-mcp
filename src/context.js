@@ -72,7 +72,16 @@ export async function createContext(options = {}) {
   }
 
   async function saveStream(stream, filename = 'message.bin') {
-    const safeName = basename(String(filename)).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(-100) || 'message.bin';
+    // Many filesystems cap each filename at 255 bytes, not 255 JS characters.
+    let safeName = basename(String(filename)).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '') || 'message.bin';
+    const suffix = [];
+    let nameBytes = 0;
+    for (const point of [...safeName].reverse()) {
+      nameBytes += Buffer.byteLength(point);
+      if (nameBytes > 200) break;
+      suffix.push(point);
+    }
+    safeName = suffix.reverse().join('');
     const target = join(downloadDir, `${randomUUID()}-${safeName}`);
     const handle = await open(target, 'wx', 0o600);
     let bytes = 0;

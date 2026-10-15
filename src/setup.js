@@ -2,14 +2,62 @@ import http from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
-import { saveAccount as persistAccount, listAccounts as readAccounts, validateAccount } from './config.js';
+import { saveAccount as persistAccount, listAccounts as readAccounts, validateAccount, configErrorDescriptions } from './config.js';
 
 const MAX_BODY = 16 * 1024;
 const VERIFY_ERROR = 'Connection could not be verified. Check the mailbox email, password, and exact server hostname. External mail-client access must be enabled in home.pl.';
 const SAVE_ERROR = 'The connection worked, but the account could not be saved. Unlock your operating system credential store and check the local data directory, then retry.';
+const VERIFY_DIAGNOSTICS = Object.freeze({
+  IMAP_AUTH: 'IMAP sign-in was rejected. Check the full mailbox email, mailbox password, and whether external mail clients are allowed.',
+  IMAP_NETWORK: 'The IMAP connection failed or timed out. Check the mail server hostname, network connection, and access to encrypted port 993.',
+  IMAP_TLS: 'The encrypted IMAP connection could not be established or validated. Check the exact mail server hostname and its certificate; keep TLS verification enabled.',
+  IMAP_UNKNOWN: 'IMAP verification failed. Check the mailbox settings and external mail-client access, then retry.',
+  IMAP_FOLDERS: 'IMAP sign-in worked, but mailbox folders could not be listed. Retry or ask the mail administrator to check IMAP folder access.',
+  SMTP_AUTH: 'IMAP worked, but SMTP sign-in was rejected. Check the SMTP server hostname, mailbox credentials, and whether external mail clients are allowed.',
+  SMTP_NETWORK: 'IMAP worked, but the SMTP connection failed or timed out. Check the SMTP server hostname, network connection, and access to encrypted port 465.',
+  SMTP_TLS: 'IMAP worked, but the encrypted SMTP connection could not be established or validated. Check the exact SMTP hostname and its certificate; keep TLS verification enabled.',
+  SMTP_UNKNOWN: 'IMAP worked, but SMTP verification failed. Check the SMTP settings and external mail-client access, then retry.',
+});
+const TLS_ERRORS = new Set([
+  'ETLS', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID',
+  'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'CERT_REVOKED',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+]);
+const NETWORK_ERRORS = new Set([
+  'EDNS', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED',
+  'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT', 'ETIMEOUT', 'ECONNECTION', 'ESOCKET',
+  'CONNECT_TIMEOUT', 'GREETING_TIMEOUT', 'NoConnection', 'EConnectionClosed',
+  'ClosedAfterConnectText', 'ClosedAfterConnectTLS',
+]);
 
-export async function verifyAccount(account, password) {
-  const imap = new ImapFlow({
+function verificationMessage(error) {
+  const code = error?.code;
+  return typeof code === 'string' && Object.hasOwn(VERIFY_DIAGNOSTICS, code)
+    ? `[${code}] ${VERIFY_DIAGNOSTICS[code]}` : VERIFY_ERROR;
+}
+
+function verificationError(code) {
+  // Do not retain a provider message, response, stack, or cause on this error.
+  return Object.assign(new Error(verificationMessage({ code })), { code });
+}
+
+function protocolError(protocol, error) {
+  let category = 'UNKNOWN';
+  // Nodemailer preserves a wrapped socket/TLS error in originalCode.
+  const codes = [error?.code, error?.originalCode];
+  if ((protocol === 'IMAP' && error?.authenticationFailed === true) || (protocol === 'SMTP' && error?.code === 'EAUTH')) category = 'AUTH';
+  else if (error?.tlsFailed === true || codes.some(code => TLS_ERRORS.has(code))) category = 'TLS';
+  else if (codes.some(code => NETWORK_ERRORS.has(code))) category = 'NETWORK';
+  return verificationError(`${protocol}_${category}`);
+}
+
+// Factories allow isolated transport tests; form input never controls these options.
+export async function verifyAccount(account, password, {
+  imapFactory = settings => new ImapFlow(settings),
+  smtpFactory = settings => nodemailer.createTransport(settings),
+} = {}) {
+  const imap = imapFactory({
     host: account.imap.host, port: 993, secure: true,
     auth: { user: account.email, pass: password },
     tls: { rejectUnauthorized: true, minVersion: 'TLSv1.2' },
@@ -19,18 +67,19 @@ export async function verifyAccount(account, password) {
   imap.on('error', () => {});
   const discovered = {};
   try {
-    await imap.connect();
+    try { await imap.connect(); }
+    catch (error) { throw protocolError('IMAP', error); }
     // Special-use names avoid assuming English folder names on a Polish server.
-    for (const folder of await imap.list()) {
-      const key = { '\\Sent': 'sent', '\\Drafts': 'drafts', '\\Trash': 'trash' }[folder.specialUse];
-      if (key) discovered[key] = folder.path;
-    }
-  } catch {
-    throw new Error(VERIFY_ERROR);
+    try {
+      for (const folder of await imap.list()) {
+        const key = { '\\Sent': 'sent', '\\Drafts': 'drafts', '\\Trash': 'trash' }[folder.specialUse];
+        if (key) discovered[key] = folder.path;
+      }
+    } catch { throw verificationError('IMAP_FOLDERS'); }
   } finally {
     imap.close();
   }
-  const smtp = nodemailer.createTransport({
+  const smtp = smtpFactory({
     host: account.smtp.host, port: 465, secure: true,
     forceAuth: true,
     auth: { user: account.email, pass: password },
@@ -39,7 +88,7 @@ export async function verifyAccount(account, password) {
     greetingTimeout: 15000, socketTimeout: 30000,
   });
   try { await smtp.verify(); }
-  catch { throw new Error(VERIFY_ERROR); }
+  catch (error) { throw protocolError('SMTP', error); }
   finally { smtp.close(); }
   return discovered;
 }
@@ -80,9 +129,11 @@ async function readForm(request) {
 }
 
 /**
- * Optional verify(account,password), saveAccount(account,password), and listAccounts()
+ * Optional verify(account,password), saveAccount(account,password,{signal}), and listAccounts()
  * callbacks allow end-to-end setup tests without contacting a real mailbox/keyring.
- * completion resolves {status:'connected',account}, {status:'expired'}, or {status:'cancelled'}.
+ * Saves must honor cancellation before commit. Completion waits for an in-flight
+ * save/rollback, so closing setup never claims completion while secrets change.
+ * completion resolves connected, expired, cancelled, or failed (recovery needed).
  */
 export async function startSetup(options = {}) {
   const verify = options.verify || verifyAccount;
@@ -93,6 +144,9 @@ export async function startSetup(options = {}) {
   const path = `/setup/${capability}`;
   let busy = false;
   let finished = false;
+  let saving = false;
+  let closeResult;
+  const cancellation = new AbortController();
   let origin;
   let authority;
   let expireTimer;
@@ -102,10 +156,12 @@ export async function startSetup(options = {}) {
   function finish(result) {
     if (finished) return;
     finished = true;
+    closeResult = result;
     clearTimeout(expireTimer);
+    if (result.status !== 'connected') cancellation.abort();
     server.close();
     server.closeIdleConnections();
-    resolveCompletion(result);
+    if (!saving) resolveCompletion(result);
   }
 
   function respond(response, status, { error, connected, plain } = {}) {
@@ -113,7 +169,9 @@ export async function startSetup(options = {}) {
     response.writeHead(status, {
       'Content-Type': plain ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8',
       'Content-Security-Policy': `default-src 'none'; style-src 'nonce-${nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
-      'Cache-Control': 'no-store', 'Pragma': 'no-cache', 'Referrer-Policy': 'no-referrer',
+      // Native form POSTs under no-referrer send Origin: null. Keep the real
+      // same-origin Origin for CSRF checks, without leaking referrers off-site.
+      'Cache-Control': 'no-store', 'Pragma': 'no-cache', 'Referrer-Policy': 'same-origin',
       'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
       'Cross-Origin-Opener-Policy': 'same-origin', 'Connection': 'close',
     });
@@ -134,6 +192,8 @@ export async function startSetup(options = {}) {
     let form;
     try { form = await readForm(request); }
     catch { respond(response, 400, { plain: 'Invalid form.' }); return; }
+    // Reading a slow request body yields to the expiry/cancellation timer.
+    if (finished) { respond(response, 410, { plain: 'Setup is closed. Start setup again.' }); return; }
     if (!equalToken(form.token, csrf)) { respond(response, 403, { plain: 'Forbidden.' }); return; }
     if (busy) { respond(response, 409, { error: 'A connection check is already running. Wait for it to finish.' }); return; }
     busy = true;
@@ -156,21 +216,42 @@ export async function startSetup(options = {}) {
       const discovered = await verify(account, password);
       if (finished) { respond(response, 410, { plain: 'Setup expired. Start setup again.' }); return; }
       account = validateAccount({ ...account, folders: { ...(discovered || {}), ...account.folders } });
-    } catch {
+    } catch (error) {
       busy = false; password = undefined;
-      respond(response, 400, { error: VERIFY_ERROR }); return;
+      respond(response, 400, { error: verificationMessage(error) }); return;
     }
+    let saved = false;
     try {
       const existing = (await list()).find(a => a.email.toLowerCase() === account.email.toLowerCase() && a.imap.host === account.imap.host);
       if (existing) account.id = existing.id;
       if (finished) { respond(response, 410, { plain: 'Setup expired. Start setup again.' }); return; }
-      await save(account, password);
-    } catch {
+      saving = true;
+      await save(account, password, { signal: cancellation.signal });
+      saved = true;
+    } catch (error) {
       busy = false; password = undefined;
+      if (['CONFIG_RECOVERY_REQUIRED', 'CONFIG_LOCK_RELEASE_FAILED'].includes(error.code)) {
+        const message = configErrorDescriptions[error.code];
+        if (finished) closeResult = { status: 'failed', message };
+        respond(response, 500, { error: message }); return;
+      }
+      if (finished) { respond(response, 410, { plain: 'Setup is closed. Start setup again.' }); return; }
+      if (error.code === 'CONFIG_BUSY') {
+        respond(response, 409, { error: configErrorDescriptions.CONFIG_BUSY }); return;
+      }
       respond(response, 500, { error: SAVE_ERROR }); return;
-    } finally { password = undefined; }
-    response.once('finish', () => finish({ status: 'connected', account }));
+    } finally {
+      password = undefined;
+      saving = false;
+      if (finished) {
+        // A commit may finish just before cancellation reaches it. Report the
+        // observed successful save rather than falsely saying it was discarded.
+        resolveCompletion(saved ? { status: 'connected', account } : closeResult);
+      }
+    }
     respond(response, 200, { connected: true });
+    // Connection outcome must not depend on the browser receiving the response.
+    finish({ status: 'connected', account });
   }
 
   const server = http.createServer((request, response) => {
