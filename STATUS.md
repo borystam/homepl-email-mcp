@@ -28,6 +28,14 @@ before the fix and now checks the exact SMTP bytes, Sent bytes, returned ID and
 persisted outcome. Independent review found no actionable issues. These local
 source fixes are not part of the published v0.3.0 release yet.
 
+The updated installed connector was then started as a fresh stdio MCP process.
+It discovered all 20 tools and reused the existing OS-keyring login without a
+new setup flow. A third authorized live test confirmed SMTP acceptance and an
+identical Message-ID in the result, persisted outcome, Sent folder and received
+copy. Sent-folder pagination completed all three one-message pages. The already
+running desktop chat still needs its MCP connection reloaded to load new code;
+computer control cannot open this app's own settings UI.
+
 ## v0.3.0 conversation-driven local onboarding — 2026-10-15
 
 The affected Windows installation subsequently reported its agent shell running
