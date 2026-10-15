@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // GitHub Windows CI only: temporarily trust a unique synthetic root in the
-// current user's certificate store. Never touches mail accounts or credentials.
+// machine's certificate store. Never touches mail accounts or credentials.
 // Fresh workers avoid Node's cached system certificate list between stages.
 import assert from 'node:assert/strict';
 import { X509Certificate, randomUUID } from 'node:crypto';
@@ -100,13 +100,13 @@ async function updateWindowsRoot(action, certPath, thumbprint) {
   assert.ok(['add', 'remove'].includes(action));
   assert.match(thumbprint, /^[A-F0-9]{40}$/);
   assert.equal(new X509Certificate(await readFile(certPath)).fingerprint.replaceAll(':', ''), thumbprint);
-  // X509Store.Add can display an interactive root-trust prompt. Certutil's
-  // force flag performs this synthetic CI import without waiting for UI.
-  // PowerShell only verifies the exact thumbprint through a read-only store.
+  // CurrentUser root imports display a native trust prompt even with certutil
+  // -f. GitHub-hosted Windows runners have administrator access, so use their
+  // disposable LocalMachine store. Verify only this thumbprint read-only.
   const count = await windowsRootCount(thumbprint, `root:${action}:count-before`);
   if (action === 'add') assert.equal(count, 0, 'Synthetic root unexpectedly exists');
   else if (count === 0) return;
-  await run('certutil.exe', ['-user', '-f', action === 'add' ? '-addstore' : '-delstore', 'Root', action === 'add' ? certPath : thumbprint], {
+  await run('certutil.exe', ['-f', action === 'add' ? '-addstore' : '-delstore', 'Root', action === 'add' ? certPath : thumbprint], {
     timeout: 20_000, windowsHide: true,
   }, `root:${action}:certutil`);
   assert.equal(await windowsRootCount(thumbprint, `root:${action}:count-after`), action === 'add' ? 1 : 0, 'Synthetic root-store update failed');
@@ -119,7 +119,7 @@ async function windowsRootCount(thumbprint, label) {
   const command = `
 $ErrorActionPreference = 'Stop'
 $expected = $env:HOMEPL_SMOKE_CERT_THUMBPRINT
-$store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser')
+$store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'LocalMachine')
 $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
 try {
   [Console]::WriteLine($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $expected, $false).Count)

@@ -28,7 +28,7 @@ are performed by the agent. Actual security/organization blocks remain blocks.
 Synthetic tests cover combined CA sources and all four mail transport paths,
 untrusted/hostname rejection, pre-form storage order, safe storage-stage messages,
 and cleanup/rollback. Windows CI additionally installs and removes one unique
-synthetic current-user root, proving fresh-process native trust and rejection
+synthetic machine-store root on an ephemeral runner, proving fresh-process native trust and rejection
 after removal; no user machine trust store is modified by that smoke script.
 The independent patch reviewer found one doctor binding-message gap, which was
 fixed, and no remaining blocking issues. The local full suite passed 153 tests
